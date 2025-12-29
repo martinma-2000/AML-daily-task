@@ -4,9 +4,12 @@ from models.task_config import Base, TaskConfig
 from services.task_service import TaskService
 from scheduler.task_scheduler import TaskScheduler
 from config.settings import Settings
+from api.task_api import create_app
 import logging
 import atexit
 import time
+import threading
+from flask import Flask
 
 # 配置日志
 logging.basicConfig(level=logging.INFO)
@@ -63,6 +66,9 @@ def main():
     # 启动调度器
     scheduler.start()
     
+    # 创建API应用
+    api_app = create_app(scheduler, task_service)
+    
     # 注册退出处理
     def shutdown():
         scheduler.stop()
@@ -70,9 +76,22 @@ def main():
     
     atexit.register(shutdown)
     
+    # 在单独的线程中启动API服务器
+    def run_api():
+        api_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+    
+    api_thread = threading.Thread(target=run_api, daemon=True)
+    api_thread.start()
+    
     try:
         # 保持程序运行
-        print("定时任务容器已启动，按 Ctrl+C 退出")
+        print("定时任务容器已启动，API服务运行在 http://localhost:5000")
+        print("可用API接口:")
+        print("  GET  /health - 健康检查")
+        print("  POST /tasks/trigger/<task_id> - 通过ID手动触发任务")
+        print("  POST /tasks/trigger_by_name/<task_name> - 通过名称手动触发任务")
+        print("  GET  /tasks/list - 列出所有任务")
+        print("按 Ctrl+C 退出")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
