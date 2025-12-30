@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models.task_config import Base, TaskConfig
+from models.dify_result import DifyCallResult  # 导入DifyCallResult以确保模型被注册到Base中
 from services.task_service import TaskService
 from scheduler.task_scheduler import TaskScheduler
 from config.settings import Settings
