@@ -96,7 +96,7 @@ class BatchApiService:
             'Authorization': f'Bearer {api_key}' if api_key else ''
         }
         
-        # 获取第五列的数据作为案例ID（如果存在）
+        # TODO 获取第五列的数据作为案例ID（如果存在）,具体在第几列暂时未定
         case_id = "N/A"
         row_values = list(row.values())
         if len(row_values) >= 5:
@@ -178,6 +178,7 @@ class BatchApiService:
                         }
                     },
                     "response_mode": "blocking",
+                    # TODO 用户信息是否需要配置
                     "user": "ma"
                 }
                 
