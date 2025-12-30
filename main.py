@@ -45,7 +45,7 @@ def create_sample_data(db_session):
         )
         db_session.add(sample_task)
         db_session.commit()
-        print("已创建示例任务数据")
+        logging.info("已创建示例任务数据")
 
 def main():
     # 初始化数据库
@@ -86,17 +86,17 @@ def main():
     
     try:
         # 保持程序运行
-        print("定时任务容器已启动，API服务运行在 http://localhost:5000")
-        print("可用API接口:")
-        print("  GET  /health - 健康检查")
-        print("  POST /tasks/trigger/<task_id> - 通过ID手动触发任务")
-        print("  POST /tasks/trigger_by_name/<task_name> - 通过名称手动触发任务")
-        print("  GET  /tasks/list - 列出所有任务")
-        print("按 Ctrl+C 退出")
+        logging.info("定时任务容器已启动，API服务运行在 http://localhost:5000")
+        logging.info("可用API接口:")
+        logging.info("  GET  /health - 健康检查")
+        logging.info("  POST /tasks/trigger/<task_id> - 通过ID手动触发任务")
+        logging.info("  POST /tasks/trigger_by_name/<task_name> - 通过名称手动触发任务")
+        logging.info("  GET  /tasks/list - 列出所有任务")
+        logging.info("按 Ctrl+C 退出")
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        print("接收到退出信号")
+        logging.info("接收到退出信号")
         shutdown()
 
 if __name__ == "__main__":

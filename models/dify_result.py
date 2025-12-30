@@ -14,6 +14,7 @@ class DifyCallResult(Base):
     upload_api_response = Column(JSON)  # 存储上传API的响应
     run_response = Column(JSON)  # 存储运行响应
     parsed_result = Column(JSON)  # 解析结果
+    case_id = Column(String(255))  # 存储案例ID，用于追踪交易流水号
 
     execution_time = Column(DateTime, default=datetime.utcnow)  # 执行时间
     status = Column(String(50), default='pending')  # 状态，默认为pending
