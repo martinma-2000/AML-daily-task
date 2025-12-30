@@ -5,6 +5,15 @@ FROM python:3.13-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# 安装系统依赖（psycopg2和其他库需要的一些系统库）
+RUN apt-get update && apt-get install -y \
+    gcc \
+    g++ \
+    postgresql-client \
+    libpq-dev \
+    python3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 # 创建非root用户
 RUN adduser --disabled-password --gecos '' appuser
 
@@ -20,7 +29,6 @@ COPY requirements.txt .
 
 # 安装项目依赖（使用更具体的版本）
 RUN pip install --no-cache-dir -r requirements.txt && \
-    pip install --no-cache-dir SQLAlchemy==2.0.45 APScheduler==3.10.4 && \
     # 清理缓存以减小镜像大小
     pip cache purge
 
