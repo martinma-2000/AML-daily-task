@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  aml-daily-task:
+    build: .
+    ports:
+      - "5000:5000"
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://root:postgre%40123@localhost:35432/task_container_db
+      - TASK_SAMPLE=*/30 * * * *
+      - TASK_DAILY=0 2 * * *
+    env_file:
+      - .env
+    volumes:
+      - ./logs:/app/logs  # 如果有日志目录的话
+    restart: unless-stopped
+    depends_on:
+      - db  # 如果使用数据库的话
+
+  # 如果需要数据库服务，取消下面的注释
+  # db:
+  #   image: postgres:15
+  #   environment:
+  #     POSTGRES_DB: task_container_db
+  #     POSTGRES_USER: root
+  #     POSTGRES_PASSWORD: postgre@123
+  #   ports:
+  #     - "35432:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
