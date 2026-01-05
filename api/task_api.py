@@ -29,7 +29,12 @@ def create_app(task_scheduler, task_service):
                 return jsonify({'error': f'任务ID {task_id} 已被禁用'}), 400
             
             # 执行任务
-            execute_task_function(TaskService, sessionmaker(bind=create_engine(Settings.DATABASE_URL)), task_id)
+            engine = create_engine(Settings.DATABASE_URL)
+            Session = sessionmaker(bind=engine)
+            try:
+                execute_task_function(TaskService, Session, task_id)
+            finally:
+                engine.dispose()
             
             return jsonify({
                 'message': f'任务 {task.task_name} (ID: {task_id}) 已手动触发执行',
@@ -54,7 +59,12 @@ def create_app(task_scheduler, task_service):
                 return jsonify({'error': f'任务 {task_name} 已被禁用'}), 400
             
             # 执行任务
-            execute_task_function(TaskService, sessionmaker(bind=create_engine(Settings.DATABASE_URL)), task.id)
+            engine = create_engine(Settings.DATABASE_URL)
+            Session = sessionmaker(bind=engine)
+            try:
+                execute_task_function(TaskService, Session, task.id)
+            finally:
+                engine.dispose()
             
             return jsonify({
                 'message': f'任务 {task_name} (ID: {task.id}) 已手动触发执行',

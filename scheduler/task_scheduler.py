@@ -36,6 +36,7 @@ def execute_task_function(task_service_class, db_session_class, task_id):
         logger.error(f"执行任务失败: {str(e)}")
     finally:
         db_session.close()
+        engine.dispose()
 
 def _run_task_logic(task_config, task_id=None):
     """具体的任务逻辑实现"""

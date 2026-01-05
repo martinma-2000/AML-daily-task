@@ -20,7 +20,8 @@ def init_database():
     engine = create_engine(Settings.DATABASE_URL)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
-    return engine, Session()
+    db_session = Session()
+    return engine, db_session
 
 def create_sample_data(db_session):
     """创建示例数据"""
@@ -74,6 +75,7 @@ def main():
     def shutdown():
         scheduler.stop()
         db_session.close()
+        engine.dispose()
     
     atexit.register(shutdown)
     

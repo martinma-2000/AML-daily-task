@@ -100,7 +100,7 @@ class BatchApiService:
         case_id = "N/A"
         row_values = list(row.values())
         if len(row_values) >= 5:
-            case_id = row_values[4]  # 第五列（索引为4）
+            case_id = row_values[0]  # 第五列（索引为4）
         
         # 准备上传的CSV文件（单行数据）
         output = io.StringIO()
@@ -222,6 +222,11 @@ class BatchApiService:
         if run_response:
             parsed_result = self._parse_workflow_result(run_response)
         
+        # 处理run_response中的Unicode转义序列
+        if run_response and isinstance(run_response, dict):
+            # 递归处理字典中的所有字符串值
+            run_response = self._handle_unicode_in_dict(run_response)
+        
         try:
             # 创建结果记录
             result_record = DifyCallResult(
@@ -249,6 +254,7 @@ class BatchApiService:
             return None
         finally:
             db_session.close()
+            engine.dispose()
 
     def _parse_workflow_result(self, workflow_response_data):
         """解析工作流结果，提取outputs.RES的值"""
@@ -265,7 +271,30 @@ class BatchApiService:
             # RES为dify结束节点的变量赋值，根据dify设置可更改
             res_value = outputs.get('RES')
             
+            # 处理Unicode转义序列，确保返回原始值
+            if isinstance(res_value, str):
+                # 使用encode/decode处理Unicode转义序列
+                try:
+                    res_value = res_value.encode().decode('unicode_escape')
+                except UnicodeDecodeError:
+                    # 如果解码失败，返回原始值
+                    pass
+            
             return res_value
         except (json.JSONDecodeError, AttributeError) as e:
             logger.error(f"解析工作流结果失败: {str(e)}")
             return None
+
+    def _handle_unicode_in_dict(self, data):
+        """递归处理字典中的Unicode转义序列"""
+        if isinstance(data, dict):
+            return {key: self._handle_unicode_in_dict(value) for key, value in data.items()}
+        elif isinstance(data, list):
+            return [self._handle_unicode_in_dict(item) for item in data]
+        elif isinstance(data, str):
+            try:
+                return data.encode().decode('unicode_escape')
+            except UnicodeDecodeError:
+                return data
+        else:
+            return data
