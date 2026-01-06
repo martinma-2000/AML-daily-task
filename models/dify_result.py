@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, JSON, DateTime, ForeignKey
+from sqlalchemy import Column, Integer, String, JSON,TEXT, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 # 从task_config导入Base，确保使用同一个Base
@@ -13,7 +13,7 @@ class DifyCallResult(Base):
     task_config = relationship('TaskConfig', back_populates='dify_call_results', lazy='select')
     upload_api_response = Column(JSON)  # 存储上传API的响应
     run_response = Column(JSON)  # 存储运行响应
-    parsed_result = Column(JSON)  # 解析结果
+    parsed_result = Column(TEXT)  # 解析结果
     case_id = Column(String(255))  # 存储案例ID，用于追踪交易流水号
 
     execution_time = Column(DateTime, default=datetime.utcnow)  # 执行时间

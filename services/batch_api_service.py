@@ -12,6 +12,9 @@ from models.dify_result import DifyCallResult
 
 logger = logging.getLogger(__name__)
 
+engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine)
+
 class BatchApiService:
     """批量API调用服务类"""
 
@@ -100,7 +103,7 @@ class BatchApiService:
         case_id = "N/A"
         row_values = list(row.values())
         if len(row_values) >= 5:
-            case_id = row_values[0]  # 第五列（索引为4）
+            case_id = row_values[0]  # 第1列（索引为4）
         
         # 准备上传的CSV文件（单行数据）
         output = io.StringIO()
@@ -212,89 +215,94 @@ class BatchApiService:
             }
 
     def _save_api_result_to_db(self, task_data, response, result_table, run_response=None, case_id=None):
-        """将API调用结果保存到数据库"""
-        engine = create_engine(Settings.DATABASE_URL)
-        Session = sessionmaker(bind=engine)
-        db_session = Session()
-        
-        # 解析工作流结果中的RES值
+        """将 API 调用结果保存到数据库（优化版：复用全局连接池，防止泄漏）"""
+        db_session = SessionLocal()  # 创建新的数据库会话
         parsed_result = None
+
         if run_response:
             parsed_result = self._parse_workflow_result(run_response)
-        
-        # 处理run_response中的Unicode转义序列
-        if run_response and isinstance(run_response, dict):
-            # 递归处理字典中的所有字符串值
-            run_response = self._handle_unicode_in_dict(run_response)
-        
+
+            # 避免误传未解码的 \uXXXX 形式
+            if isinstance(parsed_result, (dict, list)):
+                parsed_result = json.dumps(parsed_result, ensure_ascii=False)
+            elif isinstance(parsed_result, str) and "\\u" in parsed_result:
+                try:
+                    parsed_result = json.loads(f'"{parsed_result}"')
+                except json.JSONDecodeError:
+                    pass
+
         try:
             # 创建结果记录
             result_record = DifyCallResult(
                 task_id=task_data.get('task_id', 0),
                 upload_api_response={
                     'status_code': response.status_code,
-                    'content': response.text,  # 存储响应内容
+                    'content': response.text,
                     'headers': dict(response.headers),
                     'url': response.url
                 },
-                run_response=run_response,  # 存储工作流运行响应
-                parsed_result=parsed_result,  # 存储解析后的结果
-                case_id=case_id,  # 存储案例ID
-                status='completed' if response.status_code == 200 or 201 else 'failed',
+                run_response=run_response,
+                parsed_result=parsed_result,
+                case_id=case_id,
+                status='completed' if response.status_code in (200, 201) else 'failed',
                 execution_time=datetime.utcnow()
             )
-            
+
             db_session.add(result_record)
             db_session.commit()
             logger.info(f"API响应已保存到表 {result_table}，记录ID: {result_record.id}")
             return result_record
+
         except Exception as db_error:
             logger.error(f"保存到数据库失败: {str(db_error)}")
             db_session.rollback()
             return None
+
         finally:
-            db_session.close()
-            engine.dispose()
+            db_session.close()  # 会话关闭，连接归还到连接池
 
     def _parse_workflow_result(self, workflow_response_data):
-        """解析工作流结果，提取outputs.RES的值"""
+        """解析工作流结果，提取 outputs.RES 的值"""
         if not workflow_response_data:
             return None
-        
+
         try:
-            # 解析content字段中的JSON字符串
+            # 解析 content 字段中的 JSON 字符串
             content_str = workflow_response_data.get('content', '{}')
             content_data = json.loads(content_str)
-            
-            # 提取outputs.RES的值
+
+            # 提取 outputs.RES
             outputs = content_data.get('data', {}).get('outputs', {})
-            # RES为dify结束节点的变量赋值，根据dify设置可更改
             res_value = outputs.get('RES')
-            
-            # 处理Unicode转义序列，确保返回原始值
-            if isinstance(res_value, str):
-                # 使用encode/decode处理Unicode转义序列
-                try:
-                    res_value = res_value.encode().decode('unicode_escape')
-                except UnicodeDecodeError:
-                    # 如果解码失败，返回原始值
-                    pass
-            
+
+            # 递归处理 unicode 转义
+            res_value = self._handle_unicode_in_dict(res_value)
             return res_value
-        except (json.JSONDecodeError, AttributeError) as e:
-            logger.error(f"解析工作流结果失败: {str(e)}")
+
+        except Exception as e:
+            # 解析失败时，返回 None 或原始数据
+            print(f"解析 workflow 结果异常: {e}")
             return None
 
     def _handle_unicode_in_dict(self, data):
-        """递归处理字典中的Unicode转义序列"""
-        if isinstance(data, dict):
-            return {key: self._handle_unicode_in_dict(value) for key, value in data.items()}
+        """递归处理字典、列表或字符串中的 Unicode 转义序列"""
+        if isinstance(data, str):
+            # 若字符串包含 \uXXX 转义形式，解码一次
+            if "\\u" in data:
+                try:
+                    # 用 JSON 处理 Unicode 转义更安全
+                    return json.loads(f'"{data}"')
+                except json.JSONDecodeError:
+                    # 备用方案：直接用 unicode_escape 解码
+                    return data.encode('utf-8').decode('unicode_escape')
+            else:
+                return data  # 已是正常中文，直接返回
+
+        elif isinstance(data, dict):
+            return {k: self._handle_unicode_in_dict(v) for k, v in data.items()}
+
         elif isinstance(data, list):
-            return [self._handle_unicode_in_dict(item) for item in data]
-        elif isinstance(data, str):
-            try:
-                return data.encode().decode('unicode_escape')
-            except UnicodeDecodeError:
-                return data
+            return [self._handle_unicode_in_dict(v) for v in data]
+
         else:
             return data
