@@ -12,14 +12,14 @@ def execute_task_function(task_service_class, db_session_class, task_id):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     
-    engine = create_engine(Settings.DATABASE_URL)
+    engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
     Session = sessionmaker(bind=engine)
     db_session = Session()
     
     try:
         # 重新获取任务配置
-        task_service = task_service_class(db_session)
-        task_config = task_service.get_task_by_id(task_id)
+        task_service = task_service_class()
+        task_config = task_service.get_task_by_id(task_id, db_session)
         
         if not task_config:
             logger.error(f"找不到ID为 {task_id} 的任务")
@@ -31,14 +31,15 @@ def execute_task_function(task_service_class, db_session_class, task_id):
         logger.info(f"执行任务 {task_config.task_name}，数据: {task_config.task_data}")
         
         # 可以根据任务类型执行不同的逻辑
-        _run_task_logic(task_config, task_id)
+        _run_task_logic(task_config, db_session, task_id)
     except Exception as e:
         logger.error(f"执行任务失败: {str(e)}")
+        db_session.rollback()
     finally:
         db_session.close()
         engine.dispose()
 
-def _run_task_logic(task_config, task_id=None):
+def _run_task_logic(task_config, db_session, task_id=None):
     """具体的任务逻辑实现"""
     # 根据任务名称或类型执行不同的业务逻辑
     task_data = task_config.task_data or {}
@@ -57,6 +58,7 @@ def _run_task_logic(task_config, task_id=None):
     elif task_type == 'batch_api_call':
         # 导入批量API处理模块
         from services.batch_api_service import BatchApiService
+        # 传递数据库会话给批处理服务
         BatchApiService().handle_batch_api_call(task_data)
     else:
         # 默认处理逻辑
@@ -131,7 +133,12 @@ class TaskScheduler:
         self.scheduler.remove_all_jobs()
         
         # 从数据库获取所有启用的任务
-        tasks = self.task_service.get_all_enabled_tasks()
+        # 创建临时会话来获取任务列表
+        db_session = self.db_session_class()
+        try:
+            tasks = self.task_service.get_all_enabled_tasks(db_session)
+        finally:
+            db_session.close()
         
         for task in tasks:
             self.add_task(task)

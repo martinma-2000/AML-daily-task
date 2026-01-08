@@ -1,5 +1,5 @@
 # 使用官方Python运行时作为基础镜像
-FROM python:3.13-slim
+FROM python:3.9-slim
 
 # 设置环境变量
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -20,9 +20,8 @@ RUN adduser --disabled-password --gecos '' appuser
 # 设置工作目录
 WORKDIR /app
 
-# 升级pip并安装typing-extensions以解决Python 3.13兼容性问题
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir typing-extensions==4.15.0
+# 升级pip并安装typing-extensions以解决Python 3.9兼容性问题
+RUN pip install --upgrade pip
 
 # 复制项目依赖文件
 COPY requirements.txt .

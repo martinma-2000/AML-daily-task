@@ -12,9 +12,6 @@ from models.dify_result import DifyCallResult
 
 logger = logging.getLogger(__name__)
 
-engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True)
-SessionLocal = sessionmaker(bind=engine)
-
 class BatchApiService:
     """批量API调用服务类"""
 
@@ -201,8 +198,11 @@ class BatchApiService:
             }
 
     def _save_api_result_to_db(self, task_data, response, result_table, run_response=None, case_id=None):
-        """将 API 调用结果保存到数据库（优化版：复用全局连接池，防止泄漏）"""
-        db_session = SessionLocal()  # 创建新的数据库会话
+        """将 API 调用结果保存到数据库"""
+        # 每次都创建新的会话以避免事务状态问题
+        engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+        Session = sessionmaker(bind=engine)
+        db_session = Session()
         parsed_result = None
 
         if run_response:
@@ -246,6 +246,7 @@ class BatchApiService:
 
         finally:
             db_session.close()  # 会话关闭，连接归还到连接池
+            engine.dispose()    # 释放引擎资源
 
     def _parse_workflow_result(self, workflow_response_data):
         """解析工作流结果，提取 outputs.RES 的值"""
