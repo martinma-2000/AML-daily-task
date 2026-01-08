@@ -71,23 +71,13 @@ class BatchApiService:
             # 将内容转换为字符串流以供csv模块使用
             csv_string_io = io.StringIO(csv_content)
             
-            # 读取CSV内容，没有列名，直接处理数据行
-            csv_reader_obj = csv.reader(csv_string_io)
-            
-            # 获取列数以确定列名
-            csv_string_io.seek(0)  # 重置流位置
-            first_row = next(csv_reader_obj, None)
-            if first_row:
-                fieldnames = [f"column_{i}" for i in range(len(first_row))]
-                # 重置流位置并创建DictReader
-                csv_string_io.seek(0)
-                csv_reader = csv.DictReader(csv_string_io, fieldnames=fieldnames)
-            else:
-                # 如果没有数据行，创建空的reader
-                csv_reader = []
+            # 读取CSV内容，直接处理数据行
+            csv_reader = csv.reader(csv_string_io)
             
             for row_idx, row in enumerate(csv_reader):
-                self._process_csv_row(row, row_idx, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+                # 将行数据转换为字典格式，使用索引作为键
+                row_dict = {f"column_{i}": value for i, value in enumerate(row)}
+                self._process_csv_row(row_dict, row_idx, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
                 
         except Exception as e:
             logger.error(f"处理CSV文件 {file_path} 时出错: {str(e)}")
@@ -99,17 +89,13 @@ class BatchApiService:
             'Authorization': f'Bearer {api_key}' if api_key else ''
         }
         
-        # TODO 获取第五列的数据作为案例ID（如果存在）,具体在第几列暂时未定
-        case_id = "N/A"
-        row_values = list(row.values())
-        if len(row_values) >= 5:
-            case_id = row_values[0]  # 第1列（索引为4）
+        # 获取第1列的数据作为案例ID（如果存在）
+        case_id = row.get('column_0', 'N/A')  # 第1列（索引为0）
         
-        # 准备上传的CSV文件（单行数据）
+        # 准备上传的CSV文件（单行数据）- 不包含列名
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=row.keys())
-        # 写入表头和当前行
-        writer.writeheader()
+        # 只写入当前行数据，不写入表头
         writer.writerow(row)
         csv_row_content = output.getvalue()
         csv_row_io = io.BytesIO(csv_row_content.encode('utf-8'))
