@@ -5,8 +5,17 @@ from config.settings import Settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import logging
+import os
 
 logger = logging.getLogger(__name__)
+
+# 导入CSV处理服务
+try:
+    from services.csv_processing_service import CSVProcessingService, process_csv_for_dify
+except ImportError:
+    logger.warning("CSV处理服务未找到，CSV预处理API不可用")
+    CSVProcessingService = None
+    process_csv_for_dify = None
 
 def create_app(task_scheduler, task_service):
     app = Flask(__name__)
@@ -117,5 +126,46 @@ def create_app(task_scheduler, task_service):
         except Exception as e:
             logger.error(f"获取任务列表失败: {str(e)}")
             return jsonify({'error': f'获取任务列表失败: {str(e)}'}), 500
+    
+    @app.route('/csv/preprocess', methods=['POST'])
+    def preprocess_csv():
+        """CSV预处理接口，用于在获取原始CSV文件和上传CSV文件之间进行数据处理"""
+        if not CSVProcessingService or not process_csv_for_dify:
+            return jsonify({'error': 'CSV处理服务不可用'}), 500
+        
+        try:
+            # 获取请求参数
+            data = request.get_json()
+            
+            if not data:
+                return jsonify({'error': '请提供JSON格式的请求数据'}), 400
+            
+            input_file_path = data.get('input_file_path')
+            csv_content = data.get('csv_content')
+            output_file_path = data.get('output_file_path')
+            
+            # 必须提供输入方式（文件路径或内容）
+            if not input_file_path and not csv_content:
+                return jsonify({'error': '必须提供input_file_path或csv_content参数'}), 400
+            
+            # 如果没有提供输出路径，创建临时文件
+            if not output_file_path:
+                import tempfile
+                from datetime import datetime
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                output_file_path = os.path.join(tempfile.gettempdir(), f"preprocessed_{timestamp}.csv")
+            
+            # 调用CSV处理服务
+            result = process_csv_for_dify(
+                csv_file_path=input_file_path,
+                csv_content=csv_content,
+                output_path=output_file_path
+            )
+            
+            return jsonify(result)
+        
+        except Exception as e:
+            logger.error(f"CSV预处理失败: {str(e)}")
+            return jsonify({'error': f'CSV预处理失败: {str(e)}'}), 500
     
     return app
