@@ -221,7 +221,13 @@ class CSVProcessingService:
                 return result_dict
 
             # 按case_id分组并聚合
-            result = df.groupby('case_id').apply(aggregate_group).reset_index()
+            results = []
+            for case_id, group in df.groupby('case_id'):
+                row = aggregate_group(group)
+                row['case_id'] = case_id
+                results.append(row)
+            
+            result = pd.DataFrame(results)
 
             # 确保所有列都存在
             expected_columns = [
