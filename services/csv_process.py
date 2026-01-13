@@ -68,7 +68,7 @@ def aggregate_case_data(input_csv, output_csv):
     }
 
     # 读取CSV：支持无列名的CSV输入，数据顺序需与原始列名顺序一致
-    df = pd.read_csv(input_csv, encoding='utf-8', header=None, names=list(column_mapping.keys()))
+    df = pd.read_csv(input_csv, encoding='utf-8', header=None, names=column_mapping.keys())
 
     # 重命名列
     df.rename(columns=column_mapping, inplace=True)
@@ -136,9 +136,9 @@ def aggregate_case_data(input_csv, output_csv):
                 'FUND_USE': trx['fund_usage'] if pd.notna(trx['fund_usage']) else '',
                 'TR_CHNL': str(trx['aml_channel']) if pd.notna(trx['aml_channel']) else '',
                 'TR_AREA': str(trx['trans_region']) if pd.notna(trx['trans_region']) else '',
-                'SRC_CHNL': str(trx['src_channel']) if pd.notna(trx['src_channel']) else '',
-                'TR_ORG': str(trx['trans_org']) if pd.notna(trx['trans_org']) else '',
-                'REMARK': str(trx['trans_remark']) if pd.notna(trx['trans_remark']) else ''
+                # 'SRC_CHNL': str(trx['src_channel']) if pd.notna(trx['src_channel']) else '',
+                # 'TR_ORG': str(trx['trans_org']) if pd.notna(trx['trans_org']) else '',
+                # 'REMARK': str(trx['trans_remark']) if pd.notna(trx['trans_remark']) else ''
             })
 
         # 交易对手地区统计（转换为字符串）
@@ -156,19 +156,17 @@ def aggregate_case_data(input_csv, output_csv):
 
         # 基础聚合结果
         result_dict = {
-            # 'case_id': g['case_id'].iloc[0],
+            #'case_id': g['case_id'].iloc[0],  # 修复：添加case_id到结果中
             'main_cust_name': g['main_cust_name'].iloc[0],
-            'main_cust_id': g['main_cust_id'].iloc[0] if 'main_cust_id' in g.columns else '',
-            'main_cust_industry': g['main_cust_industry'].iloc[0] if 'main_cust_industry' in g.columns else '',
-            'main_cust_gender': g['main_cust_gender'].iloc[0] if 'main_cust_gender' in g.columns else '',
-            'main_cust_open_date': g['main_cust_open_date'].iloc[0] if 'main_cust_open_date' in g.columns else '',
-            'id_type': g['id_type'].iloc[0] if 'id_type' in g.columns else '',
-            'id_number': g['id_number'].iloc[0] if 'id_number' in g.columns else '',
+            'main_cust_id': g['main_cust_id'].iloc[0] if 'main_cust_id' in g else '',
+            'main_cust_industry': g['main_cust_industry'].iloc[0] if 'main_cust_industry' in g else '',
+            'main_cust_gender': g['main_cust_gender'].iloc[0] if 'main_cust_gender' in g else '',
+            'main_cust_open_date': g['main_cust_open_date'].iloc[0] if 'main_cust_open_date' in g else '',
+            'id_type': g['id_type'].iloc[0] if 'id_type' in g else '',
+            'id_number': g['id_number'].iloc[0] if 'id_number' in g else '',
             # 'suspect_model_id': g['suspect_model_id'].iloc[0] if 'suspect_model_id' in g.columns else '',
             # 'suspect_model_name': g['suspect_model_name'].iloc[0] if 'suspect_model_name' in g.columns else '',
             'total_trans_amt': float(g['trans_amt'].sum()),
-            # 'total_cny_amt': float(g['cny_amt'].sum()) if 'cny_amt' in g.columns else 0.0,
-            # 'total_usd_amt': float(g['usd_amt'].sum()) if 'usd_amt' in g.columns else 0.0,
             'trans_count': len(g),
             'avg_trans_amt': float(g['trans_amt'].mean()),
             'max_trans_amt': float(g['trans_amt'].max()),
@@ -183,10 +181,10 @@ def aggregate_case_data(input_csv, output_csv):
                 g['counterparty_name']
                 .dropna().astype(str)
                 .apply(lambda x: x if not any(
-                    kw in x for kw in ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝','银联','代扣','平台','科技','银行']) else '')
-                .tolist()
+                    kw in x for kw in ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝','银联','代扣','平台','科技','银行']) else None)
+                .dropna().unique()[:10]
             ),
-            'model_name': g['model_name'].iloc[0] if 'suspect_model_name' in g else '',
+            'model_name': g['suspect_model_name'].iloc[0] if 'suspect_model_name' in g else '',
             'is_network_gambling_suspected':'是' if(
                 len(g) >= 50 and
                 g['trans_amt'].mean()<=10 and
@@ -194,9 +192,9 @@ def aggregate_case_data(input_csv, output_csv):
                 (g['fund_usage'].str.contains('充值|返现',na=False).any() if 'fund_usage' in g else False)
             ) else '否',
             'sample_trx_list': sample_trx,
-            'top_opposing_areas': ','.join(top_areas),
-            'main_tnx_channels': ','.join(main_channels),
-            'tr_org': g['trans_org'].iloc[0] if 'trans_org' in g else '未知机构',
+            'top_opposing_areas': ';'.join(top_areas),
+            'main_tnx_channels': ';'.join(main_channels),
+            'tr_org': g['trans_org'].iloc[0] if 'trans_org' in g.columns and len(g) > 0 else '未知机构',
             'debit_count': debit_count,
             'debit_amt': debit_amt,
             'credit_count': credit_count,
@@ -206,8 +204,14 @@ def aggregate_case_data(input_csv, output_csv):
         return result_dict
 
     # 按case_id分组并聚合
-    result = df.groupby('case_id').apply(aggregate_group).reset_index()
+    results = []
+    for case_id, group in df.groupby('case_id'):
+        row = aggregate_group(group)
+        row['case_id'] = case_id
+        results.append(row)
+    #result = df.groupby('case_id').apply(aggregate_group).reset_index()
 
+    result = pd.DataFrame(results)
     # 确保所有列都存在
     expected_columns = [
         'case_id', 'main_cust_name', 'main_cust_id', 'main_cust_industry',
