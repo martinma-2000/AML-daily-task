@@ -10,6 +10,8 @@ from config.settings import Settings
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from models.dify_result import DifyCallResult
+import tempfile
+import gzip
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +21,46 @@ SessionLocal = sessionmaker(bind=engine)
 
 class BatchApiService:
     """批量API调用服务类"""
+
+    def _unl_gz_to_csv(self, input_path, output_path=None):
+        """
+        将.unl.gz文件转换为CSV文件
+        
+        Args:
+            input_path: 输入的.unl.gz文件路径
+            output_path: 输出的CSV文件路径，如果为None则自动生成
+        
+        Returns:
+            转换后的CSV文件路径，失败时返回None
+        """
+        if not os.path.exists(input_path):
+            logger.error(f"Error: Input file '{input_path}' does not exist.")
+            return None
+        
+        # 如果没有指定输出路径，生成一个CSV文件路径
+        if output_path is None:
+            base_name = os.path.splitext(os.path.splitext(input_path)[0])[0]
+            output_path = f"{base_name}.csv"
+        
+        try:
+            with gzip.open(input_path, 'rt', encoding='utf-8') as gz_file:
+                with open(output_path, 'w', newline='', encoding='utf-8') as csv_file:
+                    writer = csv.writer(csv_file)
+                    for line_num, line in enumerate(gz_file, 1):
+                        line = line.strip()
+                        if line:
+                            fields = line.split('\x07')  # 使用^G作为分隔符
+                            writer.writerow(fields)
+                        # 每处理10000行打印一次进度
+                        if line_num % 10000 == 0:
+                            logger.info(f"已处理 {line_num} 行")
+            
+            logger.info(f"成功将 {input_path} 转换为 {output_path}")
+            return output_path
+        
+        except Exception as e:
+            logger.error(f"转换.unl.gz到CSV时出错: {str(e)}")
+            return None
 
     def handle_batch_api_call(self, task_data):
         """处理批量API调用任务"""
@@ -36,22 +78,63 @@ class BatchApiService:
         
         # 检查CSV目录是否存在
         if not os.path.exists(csv_file_path) or not os.path.isdir(csv_file_path):
-            logger.error(f"错误：CSV目录不存在: {csv_file_path}")
+            # 如果不是目录，检查是否是单个文件
+            if os.path.isfile(csv_file_path):
+                # 检查文件扩展名以确定是否需要转换
+                if csv_file_path.lower().endswith('.unl.gz'):
+                    logger.info(f"检测到.unl.gz文件，正在转换: {csv_file_path}")
+                    # 转换.unl.gz文件到CSV
+                    converted_csv_path = self._unl_gz_to_csv(csv_file_path)
+                    if converted_csv_path:
+                        logger.info(f"处理转换后的CSV文件: {converted_csv_path}")
+                        self._process_csv_file(converted_csv_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+                        # 删除临时转换的CSV文件
+                        try:
+                            os.remove(converted_csv_path)
+                            logger.info(f"已删除临时CSV文件: {converted_csv_path}")
+                        except OSError:
+                            pass
+                    else:
+                        logger.error(f"转换.unl.gz文件失败: {csv_file_path}")
+                elif csv_file_path.lower().endswith('.csv'):
+                    logger.info(f"处理CSV文件: {csv_file_path}")
+                    self._process_csv_file(csv_file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+                else:
+                    logger.error(f"不支持的文件类型: {csv_file_path}")
+            else:
+                logger.error(f"错误：CSV文件或目录不存在: {csv_file_path}")
             return
         
-        # 获取目录中的所有CSV文件
+        # 如果是目录，处理目录中的文件
+        # 获取目录中的所有CSV和UNL.GZ文件
         csv_files = [f for f in os.listdir(csv_file_path) if f.lower().endswith('.csv')]
+        unl_gz_files = [f for f in os.listdir(csv_file_path) if f.lower().endswith('.unl.gz')]
         
-        if not csv_files:
-            logger.warning(f"警告：在目录 {csv_file_path} 中未找到CSV文件")
-            return
-        
-        # 遍历CSV目录中的所有CSV文件
+        # 处理CSV文件
         for csv_file in csv_files:
             file_path = os.path.join(csv_file_path, csv_file)
             logger.info(f"处理CSV文件: {file_path}")
             
             self._process_csv_file(file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+        
+        # 处理.unl.gz文件
+        for unl_gz_file in unl_gz_files:
+            file_path = os.path.join(csv_file_path, unl_gz_file)
+            logger.info(f"检测到.unl.gz文件，正在转换: {file_path}")
+            
+            # 转换.unl.gz文件到CSV
+            converted_csv_path = self._unl_gz_to_csv(file_path)
+            if converted_csv_path:
+                logger.info(f"处理转换后的CSV文件: {converted_csv_path}")
+                self._process_csv_file(converted_csv_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+                # 删除临时转换的CSV文件
+                try:
+                    os.remove(converted_csv_path)
+                    logger.info(f"已删除临时CSV文件: {converted_csv_path}")
+                except OSError:
+                    pass
+            else:
+                logger.error(f"转换.unl.gz文件失败: {file_path}")
 
     def _process_csv_file(self, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data):
         """处理单个CSV文件"""
