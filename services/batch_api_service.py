@@ -211,7 +211,7 @@ class BatchApiService:
         }
         
         # 获取第1列的数据作为案例ID（如果存在）
-        case_id = row.get('case_id', row.get('column_0', 'N/A'))  # 优先使用预处理后的case_id
+        case_id = row.get('case_id', row.get('\ufeffcase_id', 'N/A'))  # 优先使用预处理后的case_id
         
         # 准备上传的CSV文件（单行数据）- 不包含列名
         output = io.StringIO()
@@ -261,7 +261,7 @@ class BatchApiService:
         }
         
         # 获取第1列的数据作为案例ID（如果存在）
-        case_id = row.get('column_0', 'N/A')  # 第1列（索引为0）
+        case_id = row.get('case_id', row.get('\ufeffcase_id', 'N/A'))  # 第1列（索引为0）
         
         # 准备上传的CSV文件（单行数据）- 不包含列名
         output = io.StringIO()
