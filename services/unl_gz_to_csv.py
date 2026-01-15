@@ -14,7 +14,7 @@ def unl_gz_to_csv(input_path):
     try:
         with gzip.open(input_path, 'rt', encoding='utf-8') as gz_file:
             with open(output_path, 'w', newline='',encoding='utf-8') as csv_file:
-                writer = csv_file.writer(csv_file)
+                writer = csv.writer(csv_file)
                 for line in gz_file:
                     line = line.strip()
                     if line:
