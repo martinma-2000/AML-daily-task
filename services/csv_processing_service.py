@@ -203,11 +203,13 @@ class CSVProcessingService:
                     'risk_keywords': ','.join(sorted(keywords)),
                     # 排除已知非可疑对手（如平台、系统、手续费等）
                     'counterparty_sample': ';'.join(
-                        g['counterparty_name']
-                        .dropna().astype(str)
-                        .apply(lambda x: x if not any(
-                            kw in x for kw in ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝','银联','代扣','平台','科技','银行']) else '')
-                        .tolist()
+                        list(set(  # 去重
+                            g['counterparty_name']
+                            .dropna().astype(str)
+                            .apply(lambda x: x if not any(
+                                kw in x for kw in ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝','银联','代扣','平台','科技','银行']) else '')
+                            .tolist()
+                        ))[:20]  # 限制最多20个对手方
                     ),
                     'model_name': g['model_name'].iloc[0] if 'model_name' in g else '',
                     'is_network_gambling_suspected':'是' if(
