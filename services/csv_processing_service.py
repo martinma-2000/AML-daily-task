@@ -7,6 +7,8 @@ from typing import Dict, List, Any, Optional
 import tempfile
 from pathlib import Path
 
+from envs.sqlbot.DLLs.pyexpat import features
+
 logger = logging.getLogger(__name__)
 
 class CSVProcessingService:
@@ -33,7 +35,7 @@ class CSVProcessingService:
             '模型平台最高分数': 'highest_score',
             '机器学习匹配规则前10特征序号': 'serial_num',
             '机器学习匹配规则前10特征说明': 'features',
-            '机器学习匹配规则前10特征风险概率': 'feature_value',
+            '机器学习匹配规则前10特征风险值': 'feature_value',
             '可疑案例下所有客户号': 'all_case_cust_ids',
             '可疑案例下所有客户名称': 'all_case_cust_names',
             '可疑案例下所有账号': 'all_case_acct_nos',
@@ -78,6 +80,28 @@ class CSVProcessingService:
             '摘要码': 'summary_code',
             '交易备注': 'trans_remark'
         }
+        
+    def _aggregate_features(self, group):
+        """
+        聚合并去重TOP10特征信息，以JSON格式存储完整的特征记录
+        """
+        # 创建特征记录列表，保持每个记录的完整性
+        feature_records = []
+        for idx, row in group.iterrows():
+            if pd.notna(row.get('serial_num')) or pd.notna(row.get('features')) or pd.notna(row.get('feature_value')) or pd.notna(row.get('highest_score')):
+                feature_record = {
+                    'serial_num': row.get('serial_num'),
+                    'features': row.get('features'),
+                    'feature_value': row.get('feature_value'),
+                    'highest_score': row.get('highest_score')
+                }
+                # 转换为字符串以便比较和去重
+                record_str = str(feature_record)
+                # 检查是否已存在相同的记录
+                if record_str not in [str(r) for r in feature_records]:
+                    feature_records.append(feature_record)
+        
+        return feature_records
 
     def preprocess_csv(self, input_csv_path: str, output_csv_path: str) -> Dict[str, Any]:
         """
@@ -212,6 +236,8 @@ class CSVProcessingService:
                         ))[:20]  # 限制最多20个对手方
                     ),
                     'model_name': g['model_name'].iloc[0] if 'model_name' in g else '',
+                    'highest_score': g['highest_score'].iloc[0] if 'highest_score' in g else 0,
+                    'features': self._aggregate_features(g),
                     'is_network_gambling_suspected':'是' if(
                         len(g) >= 50 and
                         g['trans_amt'].mean()<=10 and
@@ -249,7 +275,7 @@ class CSVProcessingService:
                 'risk_keywords', 'counterparty_sample', 'top_opposing_areas',
                 'main_tnx_channels', 'sample_trx_list', 'debit_count',
                 'debit_amt', 'credit_count', 'credit_amt',
-                'model_name', 'is_network_gambling_suspected', 'tr_org'
+                'model_name', 'is_network_gambling_suspected', 'tr_org','features','highest_score'
             ]
 
             for col in expected_columns:
