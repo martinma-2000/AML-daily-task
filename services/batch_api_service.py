@@ -106,21 +106,25 @@ class BatchApiService:
             return
         
         # 如果是目录，处理目录中的文件
-        # 获取目录中的所有CSV和UNL.GZ文件
-        csv_files = [f for f in os.listdir(csv_file_path) if f.lower().endswith('.csv')]
+        # 获取目录中的所有UNL.GZ文件（跳过CSV文件）
         unl_gz_files = [f for f in os.listdir(csv_file_path) if f.lower().endswith('.unl.gz')]
         
-        # 处理CSV文件
-        for csv_file in csv_files:
-            file_path = os.path.join(csv_file_path, csv_file)
-            logger.info(f"处理CSV文件: {file_path}")
-            
-            self._process_csv_file(file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+        # 跳过所有CSV文件处理
+        csv_files = [f for f in os.listdir(csv_file_path) if f.lower().endswith('.csv')]
+        if csv_files:
+            logger.info(f"跳过 {len(csv_files)} 个CSV文件: {csv_files}")
         
-        # 处理.unl.gz文件
+        # 处理.unl.gz文件 - 只处理特定名称的文件
+        target_unl_files = []
         for unl_gz_file in unl_gz_files:
-            file_path = os.path.join(csv_file_path, unl_gz_file)
-            logger.info(f"检测到.unl.gz文件，正在转换: {file_path}")
+            if unl_gz_file.lower() in ['t3b_case_aml_llmp.unl.gz', 't3b_case_aml_llmp.unl.gz']:
+                target_unl_files.append(unl_gz_file)
+        
+        if target_unl_files:
+            # 如果找到了目标文件，只处理第一个匹配的文件
+            target_file = target_unl_files[0]
+            file_path = os.path.join(csv_file_path, target_file)
+            logger.info(f"检测到目标.unl.gz文件，正在转换: {file_path}")
             
             # 转换.unl.gz文件到CSV
             converted_csv_path = self._unl_gz_to_csv(file_path)
@@ -135,6 +139,8 @@ class BatchApiService:
                     pass
             else:
                 logger.error(f"转换.unl.gz文件失败: {file_path}")
+        else:
+            logger.info(f"目录中未找到目标文件 t3b_case_aml_llmp.unl.gz 或 T3B_CASE_AML_LLMP.unl.gz")
 
     def _process_csv_file(self, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data):
         """处理单个CSV文件"""

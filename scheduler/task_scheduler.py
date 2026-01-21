@@ -12,6 +12,22 @@ def execute_task_function(task_service_class, db_session_class, task_id):
     from sqlalchemy import create_engine
     from sqlalchemy.orm import sessionmaker
     
+    # 在任务执行前下载UNL文件
+    try:
+        from services.download_unl_service import DownloadUnlService
+        download_service = DownloadUnlService()
+        downloaded_files = download_service.download_unl_files()
+        
+        if downloaded_files:
+            logger.info(f"成功下载了 {len(downloaded_files)} 个UNL文件")
+            # 可以将下载的文件路径存储到任务数据中供后续处理
+        else:
+            logger.warning("未能下载UNL文件，继续执行任务")
+    except ImportError:
+        logger.warning("DownloadUnlService未找到，跳过UNL文件下载")
+    except Exception as e:
+        logger.error(f"下载UNL文件时发生错误: {str(e)}")
+    
     engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
     Session = sessionmaker(bind=engine)
     db_session = Session()
