@@ -6,6 +6,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 import logging
 import os
+from models.dify_result import DifyCallResult  # 导入DifyCallResult模型
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,38 @@ def create_app(task_scheduler, task_service):
     def health_check():
         """健康检查接口"""
         return jsonify({'status': 'healthy', 'message': 'Task API is running'})
+    
+    @app.route('/dify_result/<case_id>', methods=['GET'])
+    def get_dify_result(case_id):
+        """根据case_id获取解析结果"""
+        try:
+            # 创建独立的数据库会话
+            engine = create_engine(Settings.DATABASE_URL, pool_pre_ping=True, pool_recycle=300)
+            Session = sessionmaker(bind=engine)
+            db_session = Session()
+            
+            try:
+                # 查询匹配的DifyCallResult记录 - 按执行时间降序排列，取最新的一个
+                result = db_session.query(DifyCallResult).filter(
+                    DifyCallResult.case_id == case_id
+                ).order_by(DifyCallResult.execution_time.desc()).first()
+                
+                if not result:
+                    return jsonify({'error': f'未找到case_id为 {case_id} 的记录'}), 404
+                
+                return jsonify({
+                    'case_id': case_id,
+                    'parsed_result': result.parsed_result,
+                    'execution_time': result.execution_time.isoformat() if result.execution_time else None,
+                    'status': result.status
+                })
+            finally:
+                db_session.close()
+                engine.dispose()
+        
+        except Exception as e:
+            logger.error(f"查询Dify结果失败: {str(e)}")
+            return jsonify({'error': f'查询Dify结果失败: {str(e)}'}), 500
     
     @app.route('/tasks/trigger/<int:task_id>', methods=['POST'])
     def trigger_task(task_id):

@@ -102,6 +102,7 @@ def main():
         logging.info("  POST /tasks/trigger/<task_id> - 通过ID手动触发任务")
         logging.info("  POST /tasks/trigger_by_name/<task_name> - 通过名称手动触发任务")
         logging.info("  GET  /tasks/list - 列出所有任务")
+        logging.info("  GET  /dify_result/<case_id> - 根据case_id获取解析结果")
         logging.info("按 Ctrl+C 退出")
         while True:
             time.sleep(1)
