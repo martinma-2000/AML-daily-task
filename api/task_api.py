@@ -36,16 +36,18 @@ def create_app(task_scheduler, task_service):
             db_session = Session()
             
             try:
-                # 查询匹配的DifyCallResult记录 - 按执行时间降序排列，取最新的一个
+                # 查询匹配的DifyCallResult记录 - 同时检查正常的case_id和带BOM的case_id
                 result = db_session.query(DifyCallResult).filter(
-                    DifyCallResult.case_id == case_id
+                    (DifyCallResult.case_id == case_id) | 
+                    (DifyCallResult.case_id == '\ufeff' + case_id) |
+                    (DifyCallResult.case_id == case_id.replace('\ufeff', ''))
                 ).order_by(DifyCallResult.execution_time.desc()).first()
                 
                 if not result:
                     return jsonify({'error': f'未找到case_id为 {case_id} 的记录'}), 404
                 
                 return jsonify({
-                    'case_id': case_id,
+                    'case_id': result.case_id,  # 返回数据库中实际存储的case_id
                     'parsed_result': result.parsed_result,
                     'execution_time': result.execution_time.isoformat() if result.execution_time else None,
                     'status': result.status
