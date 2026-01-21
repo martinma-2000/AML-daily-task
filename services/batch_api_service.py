@@ -188,17 +188,10 @@ class BatchApiService:
                 # 读取CSV内容，直接处理数据行
                 csv_reader = csv.reader(csv_string_io)
                 
-                # 读取标题行
-                header = next(csv_reader, None)
-                
-                # 处理每一行
+                # 对于无列名的CSV文件，直接处理每一行数据，使用索引作为键
                 for row_idx, row in enumerate(csv_reader):
-                    if header and len(row) <= len(header):
-                        # 使用预处理后的列名
-                        row_dict = {header[i] if i < len(header) else f"column_{i}": value for i, value in enumerate(row)}
-                    else:
-                        # 如果没有标题或行长度不匹配，使用索引作为键
-                        row_dict = {f"column_{i}": value for i, value in enumerate(row)}
+                    # 根据无列名CSV处理规范，使用column_0, column_1等作为键
+                    row_dict = {f"column_{i}": value for i, value in enumerate(row)}
                     
                     # 对预处理后的行数据再次进行上传处理
                     self._process_csv_row_after_preprocess(row_dict, row_idx, processed_file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
@@ -217,8 +210,7 @@ class BatchApiService:
         }
         
         # 获取第1列的数据作为案例ID（如果存在）
-        case_id = row.get('case_id', row.get('\ufeffcase_id', 'N/A'))  # 优先使用预处理后的case_id
-        
+        case_id = row.get('column_0', row.get('case_id', row.get('\ufeffcase_id', 'N/A')))  # 优先使用第1列作为case_id，然后尝试预处理后的case_id
         # 准备上传的CSV文件（单行数据）- 不包含列名
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=row.keys())
@@ -267,8 +259,7 @@ class BatchApiService:
         }
         
         # 获取第1列的数据作为案例ID（如果存在）
-        case_id = row.get('case_id', row.get('\ufeffcase_id', 'N/A'))  # 第1列（索引为0）
-        
+        case_id = row.get('column_0', row.get('case_id', row.get('\ufeffcase_id', 'N/A')))  # 第1列（索引为0）
         # 准备上传的CSV文件（单行数据）- 不包含列名
         output = io.StringIO()
         writer = csv.DictWriter(output, fieldnames=row.keys())
