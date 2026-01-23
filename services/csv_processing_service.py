@@ -209,7 +209,11 @@ class CSVProcessingService:
 
         # 提取小时用于判断夜间交易（仅对有效时间进行提取）
         chunk_df['hour'] = chunk_df['trans_datetime'].apply(lambda x: x.hour if pd.notna(x) else np.nan)
-        
+
+        # 去重
+        if 'trans_key' in chunk_df.columns:
+            chunk_df = chunk_df.drop_duplicates(subset=['trans_key'],keep='first')
+
         return chunk_df
 
     def _aggregate_case_data(self, grouped_data):
