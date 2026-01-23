@@ -247,6 +247,23 @@ class CSVProcessingService:
                 if len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8:
                     keywords.add('夜间')
                 
+                # 检查IP和MAC地址异常（增加健壮性检查）
+                try:
+                    if 'ip_addr' in g.columns:
+                        unique_ips = g['ip_addr'].dropna().nunique()
+                        if unique_ips > 1:
+                            keywords.add('多IP')
+                except Exception:
+                    logger.warning("检查IP地址异常时出错")
+
+                try:
+                    if 'mac_addr' in g.columns:
+                        unique_macs = g['mac_addr'].dropna().nunique()
+                        if unique_macs > 1:
+                            keywords.add('多设备')
+                except Exception:
+                    logger.warning("检查MAC地址异常时出错")
+
                 # 计算对手方名称中的空值数量
                 counterparty_count = len(g)
                 if 'counterparty_name' in g.columns:
@@ -349,15 +366,15 @@ class CSVProcessingService:
 
                 # 基础聚合结果
                 result_dict = {
-                    'main_cust_name': self._safe_convert_to_str(g['main_cust_name'].iloc[0], ''),
-                    'main_cust_id': self._safe_convert_to_str(g['main_cust_id'].iloc[0] if 'main_cust_id' in g.columns else '', ''),
-                    'main_cust_industry': self._safe_convert_to_str(g['main_cust_industry'].iloc[0] if 'main_cust_industry' in g.columns else '', ''),
-                    'main_cust_gender': self._safe_convert_to_str(g['main_cust_gender'].iloc[0] if 'main_cust_gender' in g.columns else '', ''),
-                    'main_cust_open_date': self._safe_convert_to_str(g['main_cust_open_date'].iloc[0] if 'main_cust_open_date' in g.columns else '', ''),
-                    'main_cust_addr': self._safe_convert_to_str(g['main_cust_addr'].iloc[0] if 'main_cust_addr' in g.columns else '', ''),
-                    'main_cust_phone_number': self._safe_convert_to_str(g['main_cust_phone_number'].iloc[0] if 'main_cust_phone_number' in g.columns else '', ''),
-                    'id_type': self._safe_convert_to_str(g['id_type'].iloc[0] if 'id_type' in g.columns else '', ''),
-                    'id_number': self._safe_convert_to_str(g['id_number'].iloc[0] if 'id_number' in g.columns else '', ''),
+                    'main_cust_name': self._safe_convert_to_str(g['main_cust_name'].iloc[0] if len(g) > 0 and 'main_cust_name' in g.columns else '', ''),
+                    'main_cust_id': self._safe_convert_to_str(g['main_cust_id'].iloc[0] if len(g) > 0 and 'main_cust_id' in g.columns else '', ''),
+                    'main_cust_industry': self._safe_convert_to_str(g['main_cust_industry'].iloc[0] if len(g) > 0 and 'main_cust_industry' in g.columns else '', ''),
+                    'main_cust_gender': self._safe_convert_to_str(g['main_cust_gender'].iloc[0] if len(g) > 0 and 'main_cust_gender' in g.columns else '', ''),
+                    'main_cust_open_date': self._safe_convert_to_str(g['main_cust_open_date'].iloc[0] if len(g) > 0 and 'main_cust_open_date' in g.columns else '', ''),
+                    'main_cust_addr': self._safe_convert_to_str(g['main_cust_addr'].iloc[0] if len(g) > 0 and 'main_cust_addr' in g.columns else '', ''),
+                    'main_cust_phone_number': self._safe_convert_to_str(g['main_cust_phone_number'].iloc[0] if len(g) > 0 and 'main_cust_phone_number' in g.columns else '', ''),
+                    'id_type': self._safe_convert_to_str(g['id_type'].iloc[0] if len(g) > 0 and 'id_type' in g.columns else '', ''),
+                    'id_number': self._safe_convert_to_str(g['id_number'].iloc[0] if len(g) > 0 and 'id_number' in g.columns else '', ''),
                     'total_trans_amt': total_trans_amt,
                     'trans_count': trans_count,
                     'avg_trans_amt': avg_trans_amt,
@@ -370,30 +387,71 @@ class CSVProcessingService:
                     'risk_keywords': ','.join(sorted(keywords)),
                     # 排除已知非可疑对手（如平台、系统、手续费等）
                     'counterparty_sample': '',
-                    'model_name': self._safe_convert_to_str(g['model_name'].iloc[0] if 'model_name' in g else '', ''),
-                    'highest_score': self._safe_convert_to_float(g['highest_score'].iloc[0] if 'highest_score' in g else 0, 0),
-                    'features': self._aggregate_features(g),
+                    'model_name': self._safe_convert_to_str(g['model_name'].iloc[0] if len(g) > 0 and 'model_name' in g.columns else '', ''),
+                    'highest_score': self._safe_convert_to_float(g['highest_score'].iloc[0] if len(g) > 0 and 'highest_score' in g.columns else 0, 0),
+                    'features': self._aggregate_features(g) if len(g) > 0 else [],
                     'is_network_gambling_suspected': '否',  # 默认值，后面再更新
                     'sample_trx_list': sample_trx,
                     'top_opposing_areas': ','.join(top_areas),
                     'main_tnx_channels': ','.join(main_channels),
-                    'tr_org': self._safe_convert_to_str(g['trans_org'].iloc[0] if 'trans_org' in g else '', '未知机构'),
+                    'tr_org': self._safe_convert_to_str(g['trans_org'].iloc[0] if len(g) > 0 and 'trans_org' in g.columns else '', '未知机构'),
                     'debit_count': debit_count,
                     'debit_amt': debit_amt,
                     'credit_count': credit_count,
                     'credit_amt': credit_amt,
-                    'ipv6_addr':  self._safe_convert_to_str(g['ipv6_addr'].iloc[0] if 'ipv6_addr' in g.columns else '', ''),
-                    'ip_addr':  self._safe_convert_to_str(g['ip_addr'].iloc[0] if 'ip_addr' in g.columns else '', ''),
-                    'mac_addr':  self._safe_convert_to_str(g['mac_addr'].iloc[0] if 'mac_addr' in g.columns else '', ''),
+                    # 使用健壮的IP和MAC地址获取方法
+                    'ipv6_addr': self._get_representative_ip(g, 'ipv6_addr'),
+                    'ip_addr': self._get_representative_ip(g, 'ip_addr'),
+                    'mac_addr': self._get_representative_mac(g, 'mac_addr'),
                 }
 
                 # 根据条件判断是否涉嫌网络赌博
-                if ('fund_usage' in g.columns and 
-                    len(g) >= 50 and
-                    avg_trans_amt <= 10 and
-                    len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8 and
-                    g['fund_usage'].fillna('').astype(str).str.contains('充值|返现', na=False, case=False).any()):
+                is_network_gambling = False
+                try:
+                    if ('fund_usage' in g.columns and 
+                        len(g) >= 50 and
+                        avg_trans_amt <= 10 and
+                        len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8 and
+                        g['fund_usage'].fillna('').astype(str).str.contains('充值|返现', na=False, case=False).any()):
+                        is_network_gambling = True
+                except Exception:
+                    logger.warning("检查网络赌博模式时出错")
+
+                # 检测IP和MAC相关的风险模式
+                is_ip_suspicious = False
+                is_mac_suspicious = False
+                
+                try:
+                    if 'ip_addr' in g.columns:
+                        unique_ips = g['ip_addr'].dropna().nunique()
+                        total_trans = len(g)
+                        if unique_ips > 0 and total_trans > 0:
+                            ip_concentration = unique_ips / total_trans
+                            # 如果IP地址过于分散，可能表示跨区域操作
+                            if ip_concentration > 0.5:  # 超过一半的交易来自不同IP
+                                is_ip_suspicious = True
+                                keywords.add('IP分散')
+                except Exception:
+                    logger.warning("检测IP地址风险时出错")
+                
+                try:
+                    if 'mac_addr' in g.columns:
+                        unique_macs = g['mac_addr'].dropna().nunique()
+                        total_trans = len(g)
+                        if unique_macs > 0 and total_trans > 0:
+                            mac_concentration = unique_macs / total_trans
+                            # 如果MAC地址过于分散，可能表示多设备操作
+                            if mac_concentration > 0.3:  # 超过30%的交易来自不同MAC
+                                is_mac_suspicious = True
+                                keywords.add('设备分散')
+                except Exception:
+                    logger.warning("检测MAC地址风险时出错")
+
+                # 综合判断风险等级
+                if is_network_gambling or is_ip_suspicious or is_mac_suspicious:
                     result_dict['is_network_gambling_suspected'] = '是'
+                else:
+                    result_dict['is_network_gambling_suspected'] = '否'
 
                 # 处理交易对手样本
                 if 'counterparty_name' in g.columns:
@@ -572,7 +630,69 @@ class CSVProcessingService:
                 "output_file": None
             }
 
+    def _get_representative_ip(self, group, column_name):
+        """
+        获取代表性的IP地址用于反洗钱分析
+        在一个案例的所有交易中，返回最常见或第一个非空的IP地址
+        """
+        try:
+            if group is None or column_name not in group.columns:
+                return ''
+            
+            # 获取非空的IP地址
+            ip_values = group[column_name].dropna()
+            if len(ip_values) == 0 or ip_values.isna().all():
+                return ''
+            
+            # 统计IP地址出现频率，返回最常见的IP地址
+            ip_counts = ip_values.value_counts()
+            if len(ip_counts) > 0 and not ip_counts.empty:
+                # 返回出现次数最多的IP地址
+                most_common_ip = ip_counts.index[0]
+                return str(most_common_ip) if pd.notna(most_common_ip) else ''
+            else:
+                # 如果无法统计，返回第一个非空IP
+                valid_ips = ip_values.dropna()
+                if len(valid_ips) > 0:
+                    first_ip = valid_ips.iloc[0]
+                    return str(first_ip) if pd.notna(first_ip) else ''
+                else:
+                    return ''
+        except Exception as e:
+            logger.warning(f"获取代表性IP地址时出错: {str(e)}, 列名: {column_name}")
+            return ''
 
+    def _get_representative_mac(self, group, column_name):
+        """
+        获取代表性的MAC地址用于反洗钱分析
+        在一个案例的所有交易中，返回最常见或第一个非空的MAC地址
+        """
+        try:
+            if group is None or column_name not in group.columns:
+                return ''
+            
+            # 获取非空的MAC地址
+            mac_values = group[column_name].dropna()
+            if len(mac_values) == 0 or mac_values.isna().all():
+                return ''
+            
+            # 统计MAC地址出现频率，返回最常见的MAC地址
+            mac_counts = mac_values.value_counts()
+            if len(mac_counts) > 0 and not mac_counts.empty:
+                # 返回出现次数最多的MAC地址
+                most_common_mac = mac_counts.index[0]
+                return str(most_common_mac) if pd.notna(most_common_mac) else ''
+            else:
+                # 如果无法统计，返回第一个非空MAC
+                valid_macs = mac_values.dropna()
+                if len(valid_macs) > 0:
+                    first_mac = valid_macs.iloc[0]
+                    return str(first_mac) if pd.notna(first_mac) else ''
+                else:
+                    return ''
+        except Exception as e:
+            logger.warning(f"获取代表性MAC地址时出错: {str(e)}, 列名: {column_name}")
+            return ''
 # 用于Dify等平台的函数接口
 def process_csv_for_dify(csv_file_path: str = None, csv_content: str = None, output_path: str = None) -> Dict[str, Any]:
     """
