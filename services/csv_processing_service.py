@@ -377,7 +377,10 @@ class CSVProcessingService:
                     'debit_count': debit_count,
                     'debit_amt': debit_amt,
                     'credit_count': credit_count,
-                    'credit_amt': credit_amt
+                    'credit_amt': credit_amt,
+                    'ipv6_addr':  self._safe_convert_to_str(g['ipv6_addr'].iloc[0] if 'ipv6_addr' in g.columns else '', ''),
+                    'ip_addr':  self._safe_convert_to_str(g['ip_addr'].iloc[0] if 'ip_addr' in g.columns else '', ''),
+                    'mac_addr':  self._safe_convert_to_str(g['mac_addr'].iloc[0] if 'mac_addr' in g.columns else '', ''),
                 }
 
                 # 根据条件判断是否涉嫌网络赌博
@@ -494,7 +497,8 @@ class CSVProcessingService:
                 'risk_keywords', 'counterparty_sample', 'top_opposing_areas',
                 'main_tnx_channels', 'sample_trx_list', 'debit_count',
                 'debit_amt', 'credit_count', 'credit_amt',
-                'model_name', 'is_network_gambling_suspected', 'tr_org','features','highest_score'
+                'model_name', 'is_network_gambling_suspected', 'tr_org','features','highest_score',
+                'ipv6_addr','ip_addr','mac_addr'
             ]
 
             for col in expected_columns:
