@@ -221,9 +221,13 @@ class CSVProcessingService:
             try:
                 # 确保数值字段都是数字类型
                 g = group.copy()
-                g['trans_amt'] = g['trans_amt'].apply(lambda x: self._safe_convert_to_float(x, 0.0))
-                if 'income_pay_flag' in g.columns:
-                    g['income_pay_flag'] = g['income_pay_flag'].apply(lambda x: self._safe_convert_to_str(x, ''))
+                # 由于在_process_chunk中已经进行了类型转换，这里需要更加谨慎地处理
+                # 检查trans_amt列的数据类型并相应处理
+                if not pd.api.types.is_numeric_dtype(g['trans_amt']):
+                    g['trans_amt'] = pd.to_numeric(g['trans_amt'], errors='coerce').fillna(0.0)
+                
+                if 'income_pay_flag' in g.columns and not pd.api.types.is_string_dtype(g['income_pay_flag']):
+                    g['income_pay_flag'] = g['income_pay_flag'].astype(str).fillna('')
 
                 # 夜间交易（23点-6点）- 只对有效小时数计算
                 valid_hours = g['hour'].dropna()
@@ -428,17 +432,20 @@ class CSVProcessingService:
             logger.info(f"开始预处理CSV文件: {input_csv_path}")
             
             # 初始化汇总结果存储
-            all_results = {}
+            all_groups = {}
             total_processed_rows = 0
             total_chunks = 0
 
             # 使用分块读取处理大文件
+            # 设置dtype为str以避免混合类型问题，然后在后续处理中进行适当转换
             chunk_iter = pd.read_csv(
                 input_csv_path, 
                 encoding='utf-8', 
                 header=None, 
                 names=list(self.column_mapping.keys()),
-                chunksize=self.chunk_size
+                chunksize=self.chunk_size,
+                dtype=str,  # 使用字符串类型避免混合类型问题
+                on_bad_lines='skip'  # 跳过格式错误的行
             )
             
             for chunk_idx, chunk_df in enumerate(chunk_iter):
@@ -456,24 +463,28 @@ class CSVProcessingService:
                 # 处理当前块
                 processed_chunk = self._process_chunk(chunk_df)
                 
-                # 按case_id分组并聚合当前块的数据
+                # 按case_id分组合并数据，而不是立即处理
                 for case_id, group in processed_chunk.groupby('case_id'):
-                    if case_id in all_results:
-                        # 如果case_id已存在于结果中，需要合并数据
-                        # 这里简化处理，实际可能需要更复杂的合并逻辑
-                        # 为了保持一致性，我们只保留第一次出现的case_id的详细信息
-                        continue
+                    if case_id in all_groups:
+                        # 如果case_id已存在，将新的数据追加到现有的组中
+                        all_groups[case_id] = pd.concat([all_groups[case_id], group], ignore_index=True)
                     else:
-                        # 创建临时DataFrame用于聚合
-                        temp_grouped = [(case_id, group)]
-                        chunk_results, _ = self._aggregate_case_data(temp_grouped)
-                        if chunk_results:
-                            all_results[case_id] = chunk_results[0]
+                        # 否则，创建新的组
+                        all_groups[case_id] = group
 
                 total_processed_rows += len(chunk_df)
                 total_chunks += 1
 
                 logger.info(f"第 {chunk_idx + 1} 个数据块处理完成")
+
+            # 对所有合并后的案例组进行聚合处理
+            all_results = {}
+            for case_id, group in all_groups.items():
+                # 创建临时DataFrame用于聚合
+                temp_grouped = [(case_id, group)]
+                chunk_results, _ = self._aggregate_case_data(temp_grouped)
+                if chunk_results:
+                    all_results[case_id] = chunk_results[0]
 
             # 将结果转换为DataFrame
             if not all_results:
