@@ -89,7 +89,8 @@ def main():
     
     # 在单独的线程中启动API服务器
     def run_api():
-        api_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        # 增加超时时间配置
+        api_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False, threaded=True)
     
     api_thread = threading.Thread(target=run_api, daemon=True)
     api_thread.start()
@@ -101,6 +102,7 @@ def main():
         logging.info("  GET  /health - 健康检查")
         logging.info("  POST /tasks/trigger/<task_id> - 通过ID手动触发任务")
         logging.info("  POST /tasks/trigger_by_name/<task_name> - 通过名称手动触发任务")
+        logging.info("  GET  /tasks/status/<execution_id> - 获取任务执行状态")
         logging.info("  GET  /tasks/list - 列出所有任务")
         logging.info("  GET  /dify_result/<case_id> - 根据case_id获取解析结果")
         logging.info("按 Ctrl+C 退出")

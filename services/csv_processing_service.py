@@ -251,6 +251,28 @@ class CSVProcessingService:
                 if len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8:
                     keywords.add('夜间')
                 
+                # 添加整数交易金额统计分析
+                if len(valid_trans_amt) > 0:
+                    # 统计整数交易金额
+                    integer_amounts = valid_trans_amt[valid_trans_amt.apply(lambda x: x.is_integer() if pd.notna(x) else False)]
+                    integer_count = len(integer_amounts)
+                    integer_ratio = integer_count / len(valid_trans_amt) if len(valid_trans_amt) > 0 else 0
+                    
+                    # 特定整数金额检测（如整百、整千等）
+                    round_amounts = valid_trans_amt[
+                        (valid_trans_amt % 100 == 0) | 
+                        (valid_trans_amt % 1000 == 0) | 
+                        (valid_trans_amt % 10000 == 0)
+                    ]
+                    round_amount_count = len(round_amounts)
+                    round_amount_ratio = round_amount_count / len(valid_trans_amt) if len(valid_trans_amt) > 0 else 0
+                    
+                    # 如果整数金额比例超过一定阈值，则标记为可疑
+                    if integer_ratio > 0.7:  # 70%以上的交易金额为整数
+                        keywords.add('整数金额高')
+                    if round_amount_ratio > 0.5:  # 50%以上的交易金额为整百、整千等
+                        keywords.add('整额交易')
+                
                 # 检查IP和MAC地址异常（增加健壮性检查）
                 try:
                     if 'ip_addr' in g.columns:
@@ -571,7 +593,7 @@ class CSVProcessingService:
                 'main_tnx_channels', 'sample_trx_list', 'debit_count',
                 'debit_amt', 'credit_count', 'credit_amt',
                 'model_name', 'is_network_gambling_suspected', 'tr_org','features','highest_score',
-                'ipv6_addr','ip_addr','mac_addr'
+                'ipv6_addr','ip_addr','mac_addr', 'integer_trans_info'
             ]
 
             for col in expected_columns:

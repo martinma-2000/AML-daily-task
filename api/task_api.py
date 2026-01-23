@@ -7,6 +7,9 @@ from sqlalchemy.orm import sessionmaker
 import logging
 import os
 from models.dify_result import DifyCallResult  # 导入DifyCallResult模型
+import threading
+import uuid
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +20,36 @@ except ImportError:
     logger.warning("CSV处理服务未找到，CSV预处理API不可用")
     CSVProcessingService = None
     process_csv_for_dify = None
+
+# 存储任务执行状态的简单字典（在生产环境中，建议使用Redis或数据库）
+task_execution_status = {}
+
+def execute_task_in_background(TaskServiceClass, Session, task_id, task_execution_id):
+    """在后台线程中执行任务"""
+    try:
+        # 更新任务状态为正在执行
+        task_execution_status[task_execution_id] = {
+            'status': 'running',
+            'start_time': datetime.utcnow(),
+            'progress': 0,
+            'message': '任务开始执行'
+        }
+        
+        # 执行实际任务
+        execute_task_function(TaskServiceClass, Session, task_id)
+        
+        # 更新任务状态为完成
+        task_execution_status[task_execution_id]['status'] = 'completed'
+        task_execution_status[task_execution_id]['progress'] = 100
+        task_execution_status[task_execution_id]['message'] = '任务执行完成'
+        task_execution_status[task_execution_id]['end_time'] = datetime.utcnow()
+        
+    except Exception as e:
+        # 更新任务状态为失败
+        task_execution_status[task_execution_id]['status'] = 'failed'
+        task_execution_status[task_execution_id]['message'] = f'任务执行失败: {str(e)}'
+        task_execution_status[task_execution_id]['end_time'] = datetime.utcnow()
+        logger.error(f"后台任务执行失败: {str(e)}")
 
 def create_app(task_scheduler, task_service):
     app = Flask(__name__)
@@ -78,13 +111,23 @@ def create_app(task_scheduler, task_service):
                 if not task.enabled:
                     return jsonify({'error': f'任务ID {task_id} 已被禁用'}), 400
                 
-                # 执行任务 - execute_task_function内部会创建自己的会话
-                execute_task_function(TaskService, Session, task_id)
+                # 生成任务执行ID用于跟踪
+                task_execution_id = str(uuid.uuid4())
+                
+                # 在后台线程中执行任务，立即返回响应
+                thread = threading.Thread(
+                    target=execute_task_in_background,
+                    args=(TaskService, Session, task_id, task_execution_id)
+                )
+                thread.daemon = True
+                thread.start()
                 
                 return jsonify({
-                    'message': f'任务 {task.task_name} (ID: {task_id}) 已手动触发执行',
+                    'message': f'任务 {task.task_name} (ID: {task_id}) 已提交后台执行',
                     'task_id': task_id,
-                    'task_name': task.task_name
+                    'task_name': task.task_name,
+                    'execution_id': task_execution_id,
+                    'status': 'submitted'
                 })
             finally:
                 db_session.close()
@@ -112,13 +155,23 @@ def create_app(task_scheduler, task_service):
                 if not task.enabled:
                     return jsonify({'error': f'任务 {task_name} 已被禁用'}), 400
                 
-                # 执行任务 - execute_task_function内部会创建自己的会话
-                execute_task_function(TaskService, Session, task.id)
+                # 生成任务执行ID用于跟踪
+                task_execution_id = str(uuid.uuid4())
+                
+                # 在后台线程中执行任务，立即返回响应
+                thread = threading.Thread(
+                    target=execute_task_in_background,
+                    args=(TaskService, Session, task.id, task_execution_id)
+                )
+                thread.daemon = True
+                thread.start()
                 
                 return jsonify({
-                    'message': f'任务 {task_name} (ID: {task.id}) 已手动触发执行',
+                    'message': f'任务 {task_name} (ID: {task.id}) 已提交后台执行',
                     'task_id': task.id,
-                    'task_name': task_name
+                    'task_name': task_name,
+                    'execution_id': task_execution_id,
+                    'status': 'submitted'
                 })
             finally:
                 db_session.close()
@@ -127,6 +180,15 @@ def create_app(task_scheduler, task_service):
         except Exception as e:
             logger.error(f"手动触发任务失败: {str(e)}")
             return jsonify({'error': f'执行任务失败: {str(e)}'}), 500
+    
+    @app.route('/tasks/status/<execution_id>', methods=['GET'])
+    def get_task_status(execution_id):
+        """获取任务执行状态"""
+        if execution_id in task_execution_status:
+            status_info = task_execution_status[execution_id].copy()
+            return jsonify(status_info)
+        else:
+            return jsonify({'error': f'执行ID {execution_id} 不存在'}), 404
     
     @app.route('/tasks/list', methods=['GET'])
     def list_tasks():
