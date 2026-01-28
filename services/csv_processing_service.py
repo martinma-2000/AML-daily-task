@@ -90,8 +90,6 @@ class CSVProcessingService:
             '对方金融机构名称': 'fin_inst_name',
             '对方金融机构网点国家': 'fin_inst_country',
             '对方金融机构网点地区': 'fin_inst_region',
-            '交易去向国家': 'fund_dest_country',
-            '交易去向地区': 'fund_dest_region',
             '交易IPV6地址': 'ipv6_addr',
             'IP地址': 'ip_addr',
             '交易MAC地址': 'mac_addr',
