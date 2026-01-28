@@ -22,6 +22,8 @@ class CSVProcessingService:
         if chunk_size is None:
             chunk_size = Settings.CSV_PROCESSING_CHUNK_SIZE
         self.chunk_size = chunk_size  # 设置分块大小
+        self.seen_trans_keys = set()  # 用于跟踪已见过的trans_key，实现跨块去重
+        self.seen_case_trans_keys = set()  # 用于跟踪已见过的case_id+trans_key组合，实现跨块去重
         
         self.column_mapping = {
             '案例编号': 'case_id',
@@ -210,9 +212,26 @@ class CSVProcessingService:
         # 提取小时用于判断夜间交易（仅对有效时间进行提取）
         chunk_df['hour'] = chunk_df['trans_datetime'].apply(lambda x: x.hour if pd.notna(x) else np.nan)
 
-        # 去重
-        if 'trans_key' in chunk_df.columns:
-            chunk_df = chunk_df.drop_duplicates(subset=['trans_key'],keep='first')
+        # 实现跨块去重
+        if 'trans_key' in chunk_df.columns and 'case_id' in chunk_df.columns:
+            # 首先移除trans_key为空值的行
+            chunk_df = chunk_df.dropna(subset=['trans_key', 'case_id'])  # 同时检查case_id和trans_key
+            
+            if len(chunk_df) > 0:
+                # 创建case_id+trans_key的组合键
+                chunk_df['_case_trans_key'] = chunk_df['case_id'].astype(str) + '_' + chunk_df['trans_key'].astype(str)
+                
+                # 使用向量化操作过滤掉之前已见过的case_id+trans_key组合
+                mask = ~chunk_df['_case_trans_key'].isin(self.seen_case_trans_keys)
+                chunk_df = chunk_df[mask]
+                
+                # 批量更新已见的case_id+trans_key组合集合
+                if len(chunk_df) > 0:
+                    new_case_trans_keys = set(chunk_df['_case_trans_key'])
+                    self.seen_case_trans_keys.update(new_case_trans_keys)
+                
+                # 删除临时列
+                chunk_df = chunk_df.drop('_case_trans_key', axis=1)
 
         return chunk_df
 
@@ -520,6 +539,9 @@ class CSVProcessingService:
             total_processed_rows = 0
             total_chunks = 0
 
+            # 重置已见case_id+trans_key组合集合，开始新的处理任务
+            self.seen_case_trans_keys = set()
+
             # 使用分块读取处理大文件
             # 设置dtype为str以避免混合类型问题，然后在后续处理中进行适当转换
             chunk_iter = pd.read_csv(
@@ -622,6 +644,9 @@ class CSVProcessingService:
                 "processed_count": 0,
                 "output_file": None
             }
+        finally:
+            # 处理完成后重置已见case_id+trans_key组合集合
+            self.seen_case_trans_keys = set()
 
     def process_csv_content(self, csv_content: str, output_csv_path: str) -> Dict[str, Any]:
         """
