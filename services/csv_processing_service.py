@@ -699,8 +699,8 @@ class CSVProcessingService:
             ip_counts = ip_values.value_counts()
             if len(ip_counts) > 0 and not ip_counts.empty:
                 # 返回出现次数最多的IP地址
-                most_common_ip = ip_counts.index[0]
-                return str(most_common_ip) if pd.notna(most_common_ip) else ''
+                most_common_ip = ip_counts.index[0:10].tolist()
+                return ','.join(map(str, most_common_ip)) if most_common_ip else ''
             else:
                 # 如果无法统计，返回第一个非空IP
                 valid_ips = ip_values.dropna()
@@ -731,8 +731,8 @@ class CSVProcessingService:
             mac_counts = mac_values.value_counts()
             if len(mac_counts) > 0 and not mac_counts.empty:
                 # 返回出现次数最多的MAC地址
-                most_common_mac = mac_counts.index[0]
-                return str(most_common_mac) if pd.notna(most_common_mac) else ''
+                most_common_mac = mac_counts.index[0:10].tolist()
+                return ','.join(map(str, most_common_mac)) if most_common_mac else ''
             else:
                 # 如果无法统计，返回第一个非空MAC
                 valid_macs = mac_values.dropna()
