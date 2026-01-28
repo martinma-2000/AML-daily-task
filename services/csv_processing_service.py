@@ -13,18 +13,27 @@ from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+
 class CSVProcessingService:
     """CSV数据预处理服务类，用于在获取原始CSV文件和上传CSV文件之间进行数据处理"""
 
-    def __init__(self, chunk_size: int = None):
-        """初始化CSV处理服务"""
+    def __init__(self, chunk_size: int = None, id_columns: list = None):
+        """初始化CSV处理服务
+
+        Args:
+            chunk_size: 分块大小，默认使用配置文件中的值
+            id_columns: 用于去重的列名列表，默认为['case_id', 'trans_key']
+        """
         # 使用配置文件中的默认值，如果未提供chunk_size
         if chunk_size is None:
             chunk_size = Settings.CSV_PROCESSING_CHUNK_SIZE
         self.chunk_size = chunk_size  # 设置分块大小
-        self.seen_trans_keys = set()  # 用于跟踪已见过的trans_key，实现跨块去重
         self.seen_case_trans_keys = set()  # 用于跟踪已见过的case_id+trans_key组合，实现跨块去重
-        
+        self.seen_id_pairs = set()  # 用于跟踪已见过的id_columns组合，实现跨块去重
+
+        # 设置去重列，默认为case_id和trans_key
+        self.id_columns = id_columns or ['case_id', 'trans_key']
+
         self.column_mapping = {
             '案例编号': 'case_id',
             '数据日期': 'data_date',
@@ -81,8 +90,8 @@ class CSVProcessingService:
             '对方金融机构名称': 'fin_inst_name',
             '对方金融机构网点国家': 'fin_inst_country',
             '对方金融机构网点地区': 'fin_inst_region',
-            # '交易去向国家': 'fund_dest_country',
-            # '交易去向地区': 'fund_dest_region',
+            '交易去向国家': 'fund_dest_country',
+            '交易去向地区': 'fund_dest_region',
             '交易IPV6地址': 'ipv6_addr',
             'IP地址': 'ip_addr',
             '交易MAC地址': 'mac_addr',
@@ -131,6 +140,7 @@ class CSVProcessingService:
 
     def _parse_flexible_datetime(self, datetime_series):
         """灵活解析多种时间格式"""
+
         def convert_single_datetime(val):
             if pd.isna(val) or val == '' or val is None:
                 return pd.NaT
@@ -179,7 +189,7 @@ class CSVProcessingService:
             features_val = row.get('features')
             feature_value = row.get('feature_value')
             highest_score = row.get('highest_score')
-            
+
             if pd.notna(serial_num) or pd.notna(features_val) or pd.notna(feature_value) or pd.notna(highest_score):
                 feature_record = {
                     'serial_num': serial_num,
@@ -192,7 +202,7 @@ class CSVProcessingService:
                 # 检查是否已存在相同的记录
                 if record_str not in [str(r) for r in feature_records]:
                     feature_records.append(feature_record)
-        
+
         return feature_records
 
     def _process_chunk(self, chunk_df):
@@ -213,25 +223,26 @@ class CSVProcessingService:
         chunk_df['hour'] = chunk_df['trans_datetime'].apply(lambda x: x.hour if pd.notna(x) else np.nan)
 
         # 实现跨块去重
-        if 'trans_key' in chunk_df.columns and 'case_id' in chunk_df.columns:
+        if 'trans_key' in chunk_df.columns:
             # 首先移除trans_key为空值的行
-            chunk_df = chunk_df.dropna(subset=['trans_key', 'case_id'])  # 同时检查case_id和trans_key
-            
+            chunk_df = chunk_df.dropna(subset=['trans_key'])
+
             if len(chunk_df) > 0:
                 # 创建case_id+trans_key的组合键
-                chunk_df['_case_trans_key'] = chunk_df['case_id'].astype(str) + '_' + chunk_df['trans_key'].astype(str)
-                
+                chunk_df = chunk_df.copy()
+                chunk_df['case_trans_key'] = chunk_df['case_id'].astype(str) + '_' + chunk_df['trans_key'].astype(str)
+
                 # 使用向量化操作过滤掉之前已见过的case_id+trans_key组合
-                mask = ~chunk_df['_case_trans_key'].isin(self.seen_case_trans_keys)
+                mask = ~chunk_df['case_trans_key'].isin(self.seen_case_trans_keys)
                 chunk_df = chunk_df[mask]
-                
-                # 批量更新已见的case_id+trans_key组合集合
+
+                # 批量更新已见的case_id+trans_key集合
                 if len(chunk_df) > 0:
-                    new_case_trans_keys = set(chunk_df['_case_trans_key'])
+                    new_case_trans_keys = set(chunk_df['case_trans_key'])
                     self.seen_case_trans_keys.update(new_case_trans_keys)
-                
-                # 删除临时列
-                chunk_df = chunk_df.drop('_case_trans_key', axis=1)
+
+                # 移除临时的组合键
+                chunk_df = chunk_df.drop('case_trans_key', axis=1)
 
         return chunk_df
 
@@ -239,7 +250,7 @@ class CSVProcessingService:
         """聚合案例数据"""
         results = []
         processed_cases = set()
-        
+
         for case_id, group in grouped_data:
             try:
                 # 确保数值字段都是数字类型
@@ -248,7 +259,7 @@ class CSVProcessingService:
                 # 检查trans_amt列的数据类型并相应处理
                 if not pd.api.types.is_numeric_dtype(g['trans_amt']):
                     g['trans_amt'] = pd.to_numeric(g['trans_amt'], errors='coerce').fillna(0.0)
-                
+
                 if 'income_pay_flag' in g.columns and not pd.api.types.is_string_dtype(g['income_pay_flag']):
                     g['income_pay_flag'] = g['income_pay_flag'].astype(str).fillna('')
 
@@ -269,29 +280,30 @@ class CSVProcessingService:
                     keywords.add('高频')
                 if len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8:
                     keywords.add('夜间')
-                
+
                 # 添加整数交易金额统计分析
                 if len(valid_trans_amt) > 0:
                     # 统计整数交易金额
-                    integer_amounts = valid_trans_amt[valid_trans_amt.apply(lambda x: x.is_integer() if pd.notna(x) else False)]
+                    integer_amounts = valid_trans_amt[
+                        valid_trans_amt.apply(lambda x: x.is_integer() if pd.notna(x) else False)]
                     integer_count = len(integer_amounts)
                     integer_ratio = integer_count / len(valid_trans_amt) if len(valid_trans_amt) > 0 else 0
-                    
+
                     # 特定整数金额检测（如整百、整千等）
                     round_amounts = valid_trans_amt[
-                        (valid_trans_amt % 100 == 0) | 
-                        (valid_trans_amt % 1000 == 0) | 
+                        (valid_trans_amt % 100 == 0) |
+                        (valid_trans_amt % 1000 == 0) |
                         (valid_trans_amt % 10000 == 0)
-                    ]
+                        ]
                     round_amount_count = len(round_amounts)
                     round_amount_ratio = round_amount_count / len(valid_trans_amt) if len(valid_trans_amt) > 0 else 0
-                    
+
                     # 如果整数金额比例超过一定阈值，则标记为可疑
                     if integer_ratio > 0.7:  # 70%以上的交易金额为整数
                         keywords.add('整数金额高')
                     if round_amount_ratio > 0.5:  # 50%以上的交易金额为整百、整千等
                         keywords.add('整额交易')
-                
+
                 # 检查IP和MAC地址异常（增加健壮性检查）
                 try:
                     if 'ip_addr' in g.columns:
@@ -315,7 +327,7 @@ class CSVProcessingService:
                     nan_counterparty_count = g['counterparty_name'].isna().sum()
                     if nan_counterparty_count > counterparty_count * 0.5:
                         keywords.add('匿名')
-                
+
                 # 检查资金用途
                 if 'fund_usage' in g.columns:
                     fund_usage_series = g['fund_usage'].fillna('').astype(str)
@@ -353,7 +365,7 @@ class CSVProcessingService:
                         # 确保安全获取各项数据
                         trans_date_val = trx.get('trans_date', pd.NaT)
                         trans_datetime_val = trx.get('trans_datetime', pd.NaT)
-                        
+
                         sample_trx.append({
                             'TR_DT': self._safe_format_date(trans_date_val, '%Y-%m-%d', ''),
                             'TR_TM': self._safe_format_date(trans_datetime_val, '%H:%M', ''),
@@ -373,7 +385,7 @@ class CSVProcessingService:
                 if 'trans_region' in g.columns:
                     region_counts = g['trans_region'].dropna().value_counts().head(5)
                     top_areas = [self._safe_convert_to_str(x) for x in region_counts.index.tolist()]
-                
+
                 main_channels = []
                 if 'aml_channel' in g.columns:
                     channel_counts = g['aml_channel'].dropna().value_counts().head(5)
@@ -384,14 +396,14 @@ class CSVProcessingService:
                 debit_amt = 0.0
                 credit_count = 0
                 credit_amt = 0.0
-                
+
                 if 'income_pay_flag' in g.columns:
                     # 确保转换为字符串并去除空格
                     flag = g['income_pay_flag'].apply(lambda x: self._safe_convert_to_str(x, '').strip())
                     # 支持多种表示方式
                     debit_mask = flag.isin(['1', '01', '借', 'debit', 'D'])
                     credit_mask = flag.isin(['2', '02', '贷', 'credit', 'C'])
-                    
+
                     debit_count = debit_mask.sum()
                     debit_amt = float(g[debit_mask]['trans_amt'].sum()) if debit_mask.any() else 0.0
                     credit_count = credit_mask.sum()
@@ -411,35 +423,51 @@ class CSVProcessingService:
 
                 # 基础聚合结果
                 result_dict = {
-                    'main_cust_name': self._safe_convert_to_str(g['main_cust_name'].iloc[0] if len(g) > 0 and 'main_cust_name' in g.columns else '', ''),
-                    'main_cust_id': self._safe_convert_to_str(g['main_cust_id'].iloc[0] if len(g) > 0 and 'main_cust_id' in g.columns else '', ''),
-                    'main_cust_industry': self._safe_convert_to_str(g['main_cust_industry'].iloc[0] if len(g) > 0 and 'main_cust_industry' in g.columns else '', ''),
-                    'main_cust_gender': self._safe_convert_to_str(g['main_cust_gender'].iloc[0] if len(g) > 0 and 'main_cust_gender' in g.columns else '', ''),
-                    'main_cust_open_date': self._safe_convert_to_str(g['main_cust_open_date'].iloc[0] if len(g) > 0 and 'main_cust_open_date' in g.columns else '', ''),
-                    'main_cust_addr': self._safe_convert_to_str(g['main_cust_addr'].iloc[0] if len(g) > 0 and 'main_cust_addr' in g.columns else '', ''),
-                    'main_cust_phone_number': self._safe_convert_to_str(g['main_cust_phone_number'].iloc[0] if len(g) > 0 and 'main_cust_phone_number' in g.columns else '', ''),
-                    'id_type': self._safe_convert_to_str(g['id_type'].iloc[0] if len(g) > 0 and 'id_type' in g.columns else '', ''),
-                    'id_number': self._safe_convert_to_str(g['id_number'].iloc[0] if len(g) > 0 and 'id_number' in g.columns else '', ''),
+                    'main_cust_name': self._safe_convert_to_str(
+                        g['main_cust_name'].iloc[0] if len(g) > 0 and 'main_cust_name' in g.columns else '', ''),
+                    'main_cust_id': self._safe_convert_to_str(
+                        g['main_cust_id'].iloc[0] if len(g) > 0 and 'main_cust_id' in g.columns else '', ''),
+                    'main_cust_industry': self._safe_convert_to_str(
+                        g['main_cust_industry'].iloc[0] if len(g) > 0 and 'main_cust_industry' in g.columns else '',
+                        ''),
+                    'main_cust_gender': self._safe_convert_to_str(
+                        g['main_cust_gender'].iloc[0] if len(g) > 0 and 'main_cust_gender' in g.columns else '', ''),
+                    'main_cust_open_date': self._safe_convert_to_str(
+                        g['main_cust_open_date'].iloc[0] if len(g) > 0 and 'main_cust_open_date' in g.columns else '',
+                        ''),
+                    'main_cust_addr': self._safe_convert_to_str(
+                        g['main_cust_addr'].iloc[0] if len(g) > 0 and 'main_cust_addr' in g.columns else '', ''),
+                    'main_cust_phone_number': self._safe_convert_to_str(g['main_cust_phone_number'].iloc[0] if len(
+                        g) > 0 and 'main_cust_phone_number' in g.columns else '', ''),
+                    'id_type': self._safe_convert_to_str(
+                        g['id_type'].iloc[0] if len(g) > 0 and 'id_type' in g.columns else '', ''),
+                    'id_number': self._safe_convert_to_str(
+                        g['id_number'].iloc[0] if len(g) > 0 and 'id_number' in g.columns else '', ''),
                     'total_trans_amt': total_trans_amt,
                     'trans_count': trans_count,
                     'avg_trans_amt': avg_trans_amt,
                     'max_trans_amt': max_trans_amt,
                     'first_trans_date': first_trans_date if pd.notna(first_trans_date) else '',
                     'last_trans_date': last_trans_date if pd.notna(last_trans_date) else '',
-                    'report_start_date': self._safe_format_date((first_trans_date - timedelta(days=7)) if pd.notna(first_trans_date) else pd.NaT, '%Y年%m月%d日', ''),
+                    'report_start_date': self._safe_format_date(
+                        (first_trans_date - timedelta(days=7)) if pd.notna(first_trans_date) else pd.NaT,
+                        '%Y年%m月%d日', ''),
                     'report_end_date': self._safe_format_date(last_trans_date, '%Y年%m月%d日', ''),
                     'night_trans_count': night_count,
                     'risk_keywords': ','.join(sorted(keywords)),
                     # 排除已知非可疑对手（如平台、系统、手续费等）
                     'counterparty_sample': '',
-                    'model_name': self._safe_convert_to_str(g['model_name'].iloc[0] if len(g) > 0 and 'model_name' in g.columns else '', ''),
-                    'highest_score': self._safe_convert_to_float(g['highest_score'].iloc[0] if len(g) > 0 and 'highest_score' in g.columns else 0, 0),
+                    'model_name': self._safe_convert_to_str(
+                        g['model_name'].iloc[0] if len(g) > 0 and 'model_name' in g.columns else '', ''),
+                    'highest_score': self._safe_convert_to_float(
+                        g['highest_score'].iloc[0] if len(g) > 0 and 'highest_score' in g.columns else 0, 0),
                     'features': self._aggregate_features(g) if len(g) > 0 else [],
                     'is_network_gambling_suspected': '否',  # 默认值，后面再更新
                     'sample_trx_list': sample_trx,
                     'top_opposing_areas': ','.join(top_areas),
                     'main_tnx_channels': ','.join(main_channels),
-                    'tr_org': self._safe_convert_to_str(g['trans_org'].iloc[0] if len(g) > 0 and 'trans_org' in g.columns else '', '未知机构'),
+                    'tr_org': self._safe_convert_to_str(
+                        g['trans_org'].iloc[0] if len(g) > 0 and 'trans_org' in g.columns else '', '未知机构'),
                     'debit_count': debit_count,
                     'debit_amt': debit_amt,
                     'credit_count': credit_count,
@@ -453,11 +481,12 @@ class CSVProcessingService:
                 # 根据条件判断是否涉嫌网络赌博
                 is_network_gambling = False
                 try:
-                    if ('fund_usage' in g.columns and 
-                        len(g) >= 50 and
-                        avg_trans_amt <= 10 and
-                        len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8 and
-                        g['fund_usage'].fillna('').astype(str).str.contains('充值|返现', na=False, case=False).any()):
+                    if ('fund_usage' in g.columns and
+                            len(g) >= 50 and
+                            avg_trans_amt <= 10 and
+                            len(valid_hours) > 0 and (night_count / len(valid_hours)) > 0.8 and
+                            g['fund_usage'].fillna('').astype(str).str.contains('充值|返现', na=False,
+                                                                                case=False).any()):
                         is_network_gambling = True
                 except Exception:
                     logger.warning("检查网络赌博模式时出错")
@@ -465,7 +494,7 @@ class CSVProcessingService:
                 # 检测IP和MAC相关的风险模式
                 is_ip_suspicious = False
                 is_mac_suspicious = False
-                
+
                 try:
                     if 'ip_addr' in g.columns:
                         unique_ips = g['ip_addr'].dropna().nunique()
@@ -478,7 +507,7 @@ class CSVProcessingService:
                                 keywords.add('IP分散')
                 except Exception:
                     logger.warning("检测IP地址风险时出错")
-                
+
                 try:
                     if 'mac_addr' in g.columns:
                         unique_macs = g['mac_addr'].dropna().nunique()
@@ -502,7 +531,8 @@ class CSVProcessingService:
                 if 'counterparty_name' in g.columns:
                     counterparty_names = g['counterparty_name'].dropna().astype(str)
                     filtered_counterparties = []
-                    non_suspicious_keywords = ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝', '银联', '代扣', '平台', '科技', '银行']
+                    non_suspicious_keywords = ['手续费', '服务费', '系统', '自动', '结算', '财付通', '微信', '支付宝',
+                                               '银联', '代扣', '平台', '科技', '银行']
                     for name in counterparty_names:
                         if name and not any(kw in name for kw in non_suspicious_keywords):
                             filtered_counterparties.append(name)
@@ -523,40 +553,43 @@ class CSVProcessingService:
     def preprocess_csv(self, input_csv_path: str, output_csv_path: str) -> Dict[str, Any]:
         """
         预处理CSV文件：将原始交易级CSV按案例编号聚合为案例级CSV
-        
+
         Args:
             input_csv_path: 输入CSV文件路径
             output_csv_path: 输出CSV文件路径
-            
+
         Returns:
             包含处理结果的字典
         """
         try:
             logger.info(f"开始预处理CSV文件: {input_csv_path}")
-            
+
             # 初始化汇总结果存储
             all_groups = {}
             total_processed_rows = 0
             total_chunks = 0
+            removed_duplicate_rows = 0
+            removed_empty_id_rows = 0
 
-            # 重置已见case_id+trans_key组合集合，开始新的处理任务
-            self.seen_case_trans_keys = set()
+            # 重置已见trans_key集合，开始新的处理任务
+            self.seen_trans_keys = set()
+            self.seen_id_pairs = set()  # 重置已见的id_columns组合
 
             # 使用分块读取处理大文件
             # 设置dtype为str以避免混合类型问题，然后在后续处理中进行适当转换
             chunk_iter = pd.read_csv(
-                input_csv_path, 
-                encoding='utf-8', 
-                header=None, 
+                input_csv_path,
+                encoding='utf-8',
+                header=None,
                 names=list(self.column_mapping.keys()),
                 chunksize=self.chunk_size,
                 dtype=str,  # 使用字符串类型避免混合类型问题
                 on_bad_lines='skip'  # 跳过格式错误的行
             )
-            
+
             for chunk_idx, chunk_df in enumerate(chunk_iter):
                 logger.info(f"正在处理第 {chunk_idx + 1} 个数据块，包含 {len(chunk_df)} 行数据")
-                
+
                 # 重命名列
                 chunk_df.rename(columns=self.column_mapping, inplace=True)
 
@@ -566,9 +599,39 @@ class CSVProcessingService:
                 if missing_columns:
                     raise ValueError(f"缺少必要字段: {missing_columns}")
 
+                # 检查id_columns是否都存在
+                missing_id_columns = [col for col in self.id_columns if col not in chunk_df.columns]
+                if missing_id_columns:
+                    logger.warning(f"警告: 列 {missing_id_columns} 在数据块中不存在，跳过此块")
+                    total_processed_rows += len(chunk_df)
+                    continue
+
+                # 清洗id_columns：转换为字符串并去空格
+                for col in self.id_columns:
+                    chunk_df[col] = chunk_df[col].astype(str).str.strip()
+
+                # 移除id_columns为空的行
+                valid_mask = True
+                for col in self.id_columns:
+                    valid_mask = valid_mask & chunk_df[col].notna() & (chunk_df[col] != '')
+                removed_empty_id_rows += len(chunk_df) - valid_mask.sum()
+                chunk_df = chunk_df[valid_mask]
+
+                if removed_empty_id_rows > 0:
+                    logger.info(f"  移除空id行: {removed_empty_id_rows}")
+
+                # 块内去重（保留每组id_columns的第一条）
+                initial_chunk_rows = len(chunk_df)
+                chunk_df = chunk_df.drop_duplicates(subset=self.id_columns, keep='first')
+                removed_duplicate_rows += initial_chunk_rows - len(chunk_df)
+
+                # 过滤掉之前已处理过的组合
+                chunk_df = chunk_df[~chunk_df[self.id_columns].apply(tuple, axis=1).isin(self.seen_id_pairs)]
+                self.seen_id_pairs.update(chunk_df[self.id_columns].apply(tuple, axis=1))
+
                 # 处理当前块
                 processed_chunk = self._process_chunk(chunk_df)
-                
+
                 # 按case_id分组合并数据，而不是立即处理
                 for case_id, group in processed_chunk.groupby('case_id'):
                     if case_id in all_groups:
@@ -626,16 +689,24 @@ class CSVProcessingService:
 
             # 保存结果，不包含列名
             result.to_csv(output_csv_path, index=False, encoding='utf-8-sig', header=False)
-            
-            logger.info(f"预处理完成！共处理 {total_processed_rows} 行数据，{total_chunks} 个数据块，共生成 {len(result)} 个案例，已保存至 {output_csv_path}")
-            
+
+            logger.info(f"预处理完成！共处理 {total_processed_rows} 行数据，{total_chunks} 个数据块")
+            logger.info(f"  移除空id行: {removed_empty_id_rows}")
+            logger.info(f"  去重行数: {removed_duplicate_rows}")
+            logger.info(f"  输出行数: {len(result)}")
+            logger.info(f"  唯一ID组合数量: {len(self.seen_id_pairs)}")
+            logger.info(f"  已保存至 {output_csv_path}")
+
             return {
                 "success": True,
                 "message": f"预处理完成，共处理 {total_processed_rows} 行数据，{total_chunks} 个数据块，生成 {len(result)} 个案例",
                 "processed_count": len(result),
-                "output_file": output_csv_path
+                "output_file": output_csv_path,
+                "removed_empty_id_rows": removed_empty_id_rows,
+                "removed_duplicate_rows": removed_duplicate_rows,
+                "unique_ids_count": len(self.seen_id_pairs)
             }
-            
+
         except Exception as e:
             logger.error(f"预处理CSV文件时出错: {str(e)}")
             return {
@@ -645,17 +716,17 @@ class CSVProcessingService:
                 "output_file": None
             }
         finally:
-            # 处理完成后重置已见case_id+trans_key组合集合
-            self.seen_case_trans_keys = set()
+            # 处理完成后重置已见trans_key集合
+            self.seen_trans_keys = set()
 
     def process_csv_content(self, csv_content: str, output_csv_path: str) -> Dict[str, Any]:
         """
         直接处理CSV内容字符串
-        
+
         Args:
             csv_content: CSV内容字符串
             output_csv_path: 输出CSV文件路径
-            
+
         Returns:
             包含处理结果的字典
         """
@@ -667,10 +738,10 @@ class CSVProcessingService:
 
             # 调用预处理方法
             result = self.preprocess_csv(temp_file_path, output_csv_path)
-            
+
             # 删除临时文件
             os.unlink(temp_file_path)
-            
+
             return result
         except Exception as e:
             logger.error(f"处理CSV内容时出错: {str(e)}")
@@ -689,18 +760,18 @@ class CSVProcessingService:
         try:
             if group is None or column_name not in group.columns:
                 return ''
-            
+
             # 获取非空的IP地址
             ip_values = group[column_name].dropna()
             if len(ip_values) == 0 or ip_values.isna().all():
                 return ''
-            
+
             # 统计IP地址出现频率，返回最常见的IP地址
             ip_counts = ip_values.value_counts()
             if len(ip_counts) > 0 and not ip_counts.empty:
                 # 返回出现次数最多的IP地址
-                most_common_ip = ip_counts.index[0:10].tolist()
-                return ','.join(map(str, most_common_ip)) if most_common_ip else ''
+                most_common_ip = ip_counts.index[0]
+                return str(most_common_ip) if pd.notna(most_common_ip) else ''
             else:
                 # 如果无法统计，返回第一个非空IP
                 valid_ips = ip_values.dropna()
@@ -721,18 +792,18 @@ class CSVProcessingService:
         try:
             if group is None or column_name not in group.columns:
                 return ''
-            
+
             # 获取非空的MAC地址
             mac_values = group[column_name].dropna()
             if len(mac_values) == 0 or mac_values.isna().all():
                 return ''
-            
+
             # 统计MAC地址出现频率，返回最常见的MAC地址
             mac_counts = mac_values.value_counts()
             if len(mac_counts) > 0 and not mac_counts.empty:
                 # 返回出现次数最多的MAC地址
-                most_common_mac = mac_counts.index[0:10].tolist()
-                return ','.join(map(str, most_common_mac)) if most_common_mac else ''
+                most_common_mac = mac_counts.index[0]
+                return str(most_common_mac) if pd.notna(most_common_mac) else ''
             else:
                 # 如果无法统计，返回第一个非空MAC
                 valid_macs = mac_values.dropna()
@@ -744,6 +815,8 @@ class CSVProcessingService:
         except Exception as e:
             logger.warning(f"获取代表性MAC地址时出错: {str(e)}, 列名: {column_name}")
             return ''
+
+
 # 用于Dify等平台的函数接口
 def process_csv_for_dify(csv_file_path: str = None, csv_content: str = None, output_path: str = None) -> Dict[str, Any]:
     """
