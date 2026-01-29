@@ -189,8 +189,8 @@ class BatchApiService:
                 # 读取CSV内容，直接处理数据行
                 csv_reader = csv.reader(csv_string_io)
                 
-                # 从task_data中获取并发数设置，如果没有则使用默认值3
-                max_workers = task_data.get('max_workers', 3)
+                # 从task_data中获取并发数设置，如果没有则使用配置中的默认值
+                max_workers = task_data.get('max_workers', Settings.TASK_CONCURRENCY)
                 
                 # 将所有行数据收集起来用于并发处理
                 rows_data = []
