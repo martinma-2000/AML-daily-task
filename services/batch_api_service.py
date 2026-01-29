@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from models.dify_result import DifyCallResult
 import tempfile
 import gzip
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 
@@ -188,19 +189,93 @@ class BatchApiService:
                 # 读取CSV内容，直接处理数据行
                 csv_reader = csv.reader(csv_string_io)
                 
-                # 对于无列名的CSV文件，直接处理每一行数据，使用索引作为键
+                # 从task_data中获取并发数设置，如果没有则使用默认值3
+                max_workers = task_data.get('max_workers', 3)
+                
+                # 将所有行数据收集起来用于并发处理
+                rows_data = []
                 for row_idx, row in enumerate(csv_reader):
                     # 根据无列名CSV处理规范，使用column_0, column_1等作为键
                     row_dict = {f"column_{i}": value for i, value in enumerate(row)}
+                    rows_data.append((row_dict, row_idx, processed_file_path))
+                
+                logger.info(f"开始并发处理CSV文件，共 {len(rows_data)} 行数据，最大并发数: {max_workers}")
+                
+                # 使用线程池并发处理所有行
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    # 提交所有行处理任务
+                    future_to_row = {
+                        executor.submit(self._process_csv_row_after_preprocess_with_params, 
+                                       row_data[0], row_data[1], row_data[2], 
+                                       api_endpoint, api_key, workflow_run_endpoint, 
+                                       result_table, task_data): row_data[1] 
+                        for row_data in rows_data
+                    }
                     
-                    # 对预处理后的行数据再次进行上传处理
-                    self._process_csv_row_after_preprocess(row_dict, row_idx, processed_file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data)
+                    # 等待所有行处理完成
+                    for future in as_completed(future_to_row):
+                        row_idx = future_to_row[future]
+                        try:
+                            result = future.result()
+                            logger.debug(f"行 {row_idx} 处理完成")
+                        except Exception as e:
+                            logger.error(f"行 {row_idx} 处理失败: {str(e)}")
+                            
             finally:
                 # 清理临时文件
                 if os.path.exists(temp_output_path):
                     os.remove(temp_output_path)
         except Exception as e:
             logger.error(f"处理CSV文件 {file_path} 时出错: {str(e)}")
+
+    def _process_csv_row_after_preprocess_with_params(self, row, row_idx, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data):
+        """处理预处理后的CSV文件中的单行数据 - 参数版本用于并发处理"""
+        # 构建API请求
+        headers = {
+            'Authorization': f'Bearer {api_key}' if api_key else ''
+        }
+        
+        # 获取第1列的数据作为案例ID（如果存在）
+        case_id = row.get('column_0', row.get('case_id', row.get('\ufeffcase_id', 'N/A')))  # 优先使用第1列作为case_id，然后尝试预处理后的case_id
+        # 准备上传的CSV文件（单行数据）- 不包含列名
+        output = io.StringIO()
+        writer = csv.DictWriter(output, fieldnames=row.keys())
+        # 只写入当前行数据，不写入表头
+        writer.writerow(row)
+        csv_row_content = output.getvalue()
+        csv_row_io = io.BytesIO(csv_row_content.encode('utf-8'))
+        
+        files = {
+            'file': (f'preprocessed_row_{row_idx+1}_{os.path.basename(file_path)}', csv_row_io, 'text/csv')
+        }
+        
+        # 将预处理后的CSV文件的行数据作为表单数据发送
+        data = {}
+        for key, value in row.items():
+            data[key] = value
+        
+        try:
+            # 第一步：上传文件
+            response = requests.post(
+                f"{api_endpoint}/files/upload",
+                headers=headers,
+                files=files,
+                data=data
+            )
+            logger.info(f"API调用结果 (文件 {os.path.basename(file_path)}, 行 {row_idx+1}, 交易流水号: {case_id}): {response.status_code}")
+            
+            # 如果上传成功，则调用工作流运行接口
+            if response.status_code in [200, 201]:
+                run_response_data = self._call_workflow_api(response, api_key, workflow_run_endpoint, file_path, row_idx, case_id)
+            else:
+                run_response_data = None
+            
+            if result_table:
+                # 调用封装的函数保存结果到数据库，包括工作流响应
+                self._save_api_result_to_db(task_data, response, result_table, run_response_data, case_id)
+                
+        except requests.exceptions.RequestException as e:
+            logger.error(f"API调用失败 (文件 {os.path.basename(file_path)}, 行 {row_idx+1}, 交易流水号: {case_id}): {str(e)}")
 
     def _process_csv_row_after_preprocess(self, row, row_idx, file_path, api_endpoint, api_key, workflow_run_endpoint, result_table, task_data):
         """处理预处理后的CSV文件中的单行数据"""

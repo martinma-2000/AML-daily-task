@@ -2,6 +2,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from services.task_service import TaskService
 import logging
+from concurrent.futures import ThreadPoolExecutor
+from config.settings import Settings
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +101,8 @@ class TaskScheduler:
         self.scheduler = BackgroundScheduler()
         self.task_service = None
         self.db_session_class = None
+        # 创建线程池执行器，默认并发数从配置中读取
+        self.executor = ThreadPoolExecutor(max_workers=Settings.TASK_CONCURRENCY)
     
     def set_task_service(self, task_service: TaskService, db_session_class):
         """设置任务服务"""
@@ -120,8 +124,7 @@ class TaskScheduler:
         try:
             trigger = CronTrigger.from_crontab(cron_expression)
             self.scheduler.add_job(
-                func=execute_task_function,
-                args=[TaskService, self.db_session_class, task_config.id],
+                func=lambda: self._submit_task_to_pool(TaskService, self.db_session_class, task_config.id),
                 trigger=trigger,
                 id=f"task_{task_config.id}",
                 name=task_config.task_name,
@@ -130,6 +133,15 @@ class TaskScheduler:
             logger.info(f"已添加任务: {task_config.task_name} - {cron_expression}")
         except Exception as e:
             logger.error(f"添加任务 {task_config.task_name} 失败: {str(e)}")
+    
+    def _submit_task_to_pool(self, task_service_class, db_session_class, task_id):
+        """提交任务到线程池执行"""
+        # 提交任务到线程池执行
+        future = self.executor.submit(execute_task_function, task_service_class, db_session_class, task_id)
+        # 记录任务提交日志
+        logger.info(f"已将任务ID {task_id} 提交到线程池执行")
+        # 如果需要，可以添加对future结果的处理
+        return future
     
     def start(self):
         """启动调度器"""
@@ -140,7 +152,9 @@ class TaskScheduler:
     def stop(self):
         """停止调度器"""
         if self.scheduler.running:
-            self.scheduler.shutdown()
+            self.scheduler.shutdown(wait=True)
+            # 关闭线程池
+            self.executor.shutdown(wait=True)
             logger.info("任务调度器已停止")
     
     def reload_tasks(self):
